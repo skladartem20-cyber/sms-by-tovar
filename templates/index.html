@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#0f172a" />
+<title>Уцененные товары</title>
+<link rel="stylesheet" href="/static/css/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📦%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+
+<!-- ====== TOP BAR ====== -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-icon">📦</span>
+      <div>
+        <h1 id="shopTitle">Уцененные товары</h1>
+        <p id="shopSubtitle" class="subtitle">Склад уценки — выгодные предложения</p>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <button class="btn-howto" id="btnHowto" title="Как заказать?">
+        <span class="howto-pulse"></span>
+        <span class="howto-icon">❓</span>
+        <span class="howto-text">Как заказать?</span>
+      </button>
+
+      <button class="icon-btn" id="btnTheme" title="Сменить тему">
+        <span id="themeIcon">🌙</span>
+      </button>
+
+      <button class="icon-btn cart-btn" id="btnCart" title="Корзина">
+        🛒
+        <span class="cart-badge" id="cartBadge">0</span>
+      </button>
+
+      <button class="icon-btn admin-toggle" id="btnAdmin" title="Админ-панель">
+        🔑
+      </button>
+    </div>
+  </div>
+
+  <!-- Admin top toolbar (visible when logged in) -->
+  <div class="admin-toolbar" id="adminToolbar" hidden>
+    <div class="admin-toolbar-inner">
+      <span class="admin-badge">⚙️ Режим администратора</span>
+      <button class="btn btn-primary" id="btnNewProduct">＋ Новый товар</button>
+      <button class="btn btn-secondary" id="btnCategories">📁 Категории</button>
+      <button class="btn btn-secondary" id="btnSettings">⚙️ Настройки</button>
+      <button class="btn btn-secondary" id="btnStats">📊 Статистика</button>
+      <button class="btn btn-secondary" id="btnBackup">💾 Бэкап</button>
+      <button class="btn btn-secondary" id="btnBulkMode">☑️ Выделить</button>
+      <button class="btn btn-danger" id="btnLogout">Выйти</button>
+    </div>
+    <div class="admin-bulk-toolbar" id="adminBulkToolbar" hidden>
+      <span><b id="bulkCount">0</b> выбрано</span>
+      <button class="btn btn-danger" id="btnBulkDelete">Удалить выбранные</button>
+      <button class="btn btn-secondary" id="btnBulkCancel">Отмена</button>
+    </div>
+  </div>
+</header>
+
+<!-- ====== FILTERS ====== -->
+<section class="filters">
+  <div class="filters-inner">
+    <input type="search" id="searchInput" placeholder="🔍 Поиск по названию, номеру, описанию…" />
+    <select id="categoryFilter">
+      <option value="">Все категории</option>
+    </select>
+    <select id="sortFilter">
+      <option value="default">По умолчанию</option>
+      <option value="price_asc">Цена ↑ (дешевле)</option>
+      <option value="price_desc">Цена ↓ (дороже)</option>
+      <option value="newest">Сначала новые</option>
+      <option value="oldest">Сначала старые</option>
+    </select>
+    <select id="statusFilter">
+      <option value="">Любой статус</option>
+      <option value="available">В наличии</option>
+      <option value="reserved">Бронь</option>
+      <option value="sold">Продано</option>
+    </select>
+    <label class="checkbox-inline">
+      <input type="checkbox" id="onlyHighlighted" /> Только акции
+    </label>
+  </div>
+</section>
+
+<!-- ====== MAIN GRID ====== -->
+<main>
+  <div id="productsGrid" class="grid"></div>
+  <div id="emptyState" class="empty" hidden>
+    <div class="empty-icon">📭</div>
+    <h2>Пока нет товаров</h2>
+    <p>Войдите в режим администратора и добавьте первый товар.</p>
+  </div>
+</main>
+
+<!-- ====== FOOTER ====== -->
+<footer class="footer">
+  <div>👀 Посетителей: <b id="visitorCount">0</b></div>
+  <div class="footer-info">Уцененные товары • Складской сервис</div>
+</footer>
+
+<!-- ====== MODAL: How to order ====== -->
+<div class="modal" id="modalHowto" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-small">
+    <button class="modal-close" data-close>×</button>
+    <h2>📋 Как заказать?</h2>
+    <p id="howToText" class="howto-body"></p>
+    <div class="phone-block">
+      <span class="phone-label">Номер для заказов:</span>
+      <span class="phone-number" id="phoneNumber">+7 999 616-49-94</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="btnCopyPhone">📋 Скопировать номер</button>
+      <a class="btn btn-primary" id="btnMessenger" href="#" target="_blank" rel="noopener">
+        💬 <span id="messengerName">Написать в мессенджер</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- ====== MODAL: Product detail ====== -->
+<div class="modal" id="modalProduct" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-large">
+    <button class="modal-close" data-close>×</button>
+    <div class="product-detail">
+      <div class="product-gallery">
+        <div class="gallery-main">
+          <img id="galleryMain" src="" alt="" />
+          <button class="gallery-nav prev" id="galleryPrev">‹</button>
+          <button class="gallery-nav next" id="galleryNext">›</button>
+          <button class="gallery-zoom" id="galleryZoom" title="Увеличить">🔍</button>
+        </div>
+        <div class="gallery-thumbs" id="galleryThumbs"></div>
+      </div>
+      <div class="product-info">
+        <div class="product-info-head">
+          <div class="product-number" id="detailNumber">№</div>
+          <div class="product-status-pill" id="detailStatus"></div>
+        </div>
+        <h2 id="detailName"></h2>
+        <div class="detail-badges" id="detailBadges"></div>
+        <div class="detail-price" id="detailPrice"></div>
+        <div class="detail-defect-block" id="detailDefectBlock" hidden>
+          <h4>⚠️ Неисправность / состояние</h4>
+          <p id="detailDefect"></p>
+        </div>
+        <div class="detail-description" id="detailDescription"></div>
+        <div class="detail-specs">
+          <div class="spec-row"><span>📁 Категория:</span> <b id="detailCategory">—</b></div>
+          <div class="spec-row"><span>⚖️ Вес:</span> <b id="detailWeight">—</b></div>
+          <div class="spec-row"><span>📐 Размеры (Д×Ш×В):</span> <b id="detailDimensions">—</b></div>
+          <div class="spec-row"><span>📅 Добавлено:</span> <b id="detailDate">—</b></div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn btn-buy" id="btnBuyDetail">🛒 Купить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== MODAL: Image zoom ====== -->
+<div class="modal modal-zoom" id="modalZoom" hidden>
+  <div class="modal-overlay" data-close></div>
+  <button class="modal-close zoom-close" data-close>×</button>
+  <div class="zoom-controls">
+    <button class="zoom-btn" id="zoomOut">−</button>
+    <span class="zoom-level" id="zoomLevel">100%</span>
+    <button class="zoom-btn" id="zoomIn">+</button>
+    <button class="zoom-btn" id="zoomReset">⟲</button>
+  </div>
+  <div class="zoom-stage" id="zoomStage">
+    <img id="zoomImg" src="" alt="" draggable="false" />
+  </div>
+</div>
+
+<!-- ====== MODAL: Cart ====== -->
+<div class="modal" id="modalCart" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-medium">
+    <button class="modal-close" data-close>×</button>
+    <h2>🛒 Корзина</h2>
+    <div id="cartItems" class="cart-items"></div>
+    <div class="cart-empty" id="cartEmpty" hidden>
+      <p>Корзина пуста</p>
+    </div>
+    <div class="cart-summary" id="cartSummary" hidden>
+      <div class="cart-total">
+        Итого: <b id="cartTotal">0 ₽</b>
+      </div>
+      <div class="cart-instructions">
+        💡 Нажмите «Оформить заказ» — текст заказа будет автоматически скопирован, а вы перейдёте в мессенджер для отправки
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="btnClearCart">🗑️ Очистить</button>
+        <button class="btn btn-checkout" id="btnCheckout">
+          ✨ Оформить заказ
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== MODAL: Login ====== -->
+<div class="modal" id="modalLogin" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-small">
+    <button class="modal-close" data-close>×</button>
+    <h2>🔐 Вход для администратора</h2>
+    <form id="loginForm">
+      <input type="password" id="loginPassword" placeholder="Введите пароль" autocomplete="current-password" required />
+      <button type="submit" class="btn btn-primary btn-full">Войти</button>
+      <div id="loginError" class="error-msg" hidden></div>
+    </form>
+  </div>
+</div>
+
+<!-- ====== MODAL: Product editor ====== -->
+<div class="modal" id="modalEditor" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-large">
+    <button class="modal-close" data-close>×</button>
+    <h2 id="editorTitle">Новый товар</h2>
+    <form id="editorForm" class="form-grid">
+      <input type="hidden" id="editorId" />
+
+      <!-- Блок: Основное -->
+      <fieldset class="editor-section section-main full">
+        <legend><span class="section-icon">📦</span> Основная информация</legend>
+        <div class="section-grid">
+          <label>
+            <span>Номер (артикул) *</span>
+            <input type="text" id="editorNumber" required placeholder="A-001" />
+          </label>
+          <label>
+            <span>Название *</span>
+            <input type="text" id="editorName" required placeholder="LG GA-B509SLKM" />
+          </label>
+          <label>
+            <span>Цена * (₽)</span>
+            <input type="number" id="editorPrice" step="0.01" min="0" required placeholder="15990" />
+          </label>
+          <label>
+            <span>Категория</span>
+            <select id="editorCategory">
+              <option value="">— Без категории —</option>
+            </select>
+          </label>
+          <label>
+            <span>Статус</span>
+            <select id="editorStatus">
+              <option value="available">✅ В наличии</option>
+              <option value="reserved">🔒 Забронировано</option>
+              <option value="sold">⛔ Продано</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
+      <!-- Блок: Неисправность -->
+      <fieldset class="editor-section section-defect full">
+        <legend><span class="section-icon">⚠️</span> Неисправность и описание</legend>
+        <label>
+          <span>Неисправность / состояние</span>
+          <input type="text" id="editorDefect" placeholder="Например: скол на корпусе, не работает кнопка..." />
+        </label>
+        <label>
+          <span>Подробное описание</span>
+          <textarea id="editorDescription" rows="3" placeholder="Подробности, история, что в комплекте..."></textarea>
+        </label>
+      </fieldset>
+
+      <!-- Блок: Габариты -->
+      <fieldset class="editor-section section-dims full">
+        <legend><span class="section-icon">📏</span> Габариты и вес</legend>
+        <div class="section-grid section-grid-4">
+          <label>
+            <span>Вес (кг)</span>
+            <input type="number" id="editorWeight" step="0.01" min="0" placeholder="0" />
+          </label>
+          <label>
+            <span>Длина (см)</span>
+            <input type="number" id="editorLength" step="0.1" min="0" placeholder="0" />
+          </label>
+          <label>
+            <span>Ширина (см)</span>
+            <input type="number" id="editorWidth" step="0.1" min="0" placeholder="0" />
+          </label>
+          <label>
+            <span>Высота (см)</span>
+            <input type="number" id="editorHeight" step="0.1" min="0" placeholder="0" />
+          </label>
+        </div>
+      </fieldset>
+
+      <!-- Блок: Выделение -->
+      <fieldset class="editor-section section-highlight full">
+        <legend><span class="section-icon">⭐</span> Выделение и закрепление</legend>
+        <label class="checkbox">
+          <input type="checkbox" id="editorPinned" /> 📌 Закрепить наверху списка
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="editorHighlighted" /> ⭐ Выделить карточку
+        </label>
+        <div class="highlight-options" id="highlightOptions">
+          <label>
+            <span>Текст на карточке</span>
+            <input type="text" id="editorHighlightLabel" placeholder="Например: СУПЕР ВЫГОДНО, НИЗКАЯ ЦЕНА" />
+          </label>
+          <label>
+            <span>Цвет выделения</span>
+            <select id="editorHighlightColor">
+              <option value="green">🟢 Зелёный (выгодно)</option>
+              <option value="red">🔴 Красный (горячее)</option>
+              <option value="orange">🟠 Оранжевый (акция)</option>
+              <option value="blue">🔵 Синий (новинка)</option>
+              <option value="purple">🟣 Фиолетовый (хит)</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
+      <!-- Блок: Фото -->
+      <fieldset class="editor-section section-photos full">
+        <legend><span class="section-icon">📷</span> Фотографии (до 5)</legend>
+        <div class="photos-uploader">
+          <input type="file" id="editorPhotos" accept="image/*" multiple hidden />
+          <button type="button" class="btn btn-secondary" id="btnUploadPhotos">📷 Добавить фото</button>
+          <span class="hint">PNG, JPG, WEBP — макс. 12 МБ. Первое фото станет главным.</span>
+        </div>
+        <div class="photos-preview" id="photosPreview"></div>
+      </fieldset>
+
+      <div class="form-actions full">
+        <button type="button" class="btn btn-secondary" data-close>Отмена</button>
+        <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ====== MODAL: Categories ====== -->
+<div class="modal" id="modalCategories" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-medium">
+    <button class="modal-close" data-close>×</button>
+    <h2>📁 Категории</h2>
+    <form id="categoryForm" class="inline-form">
+      <input type="text" id="categoryName" placeholder="Название новой категории" required />
+      <button type="submit" class="btn btn-primary">＋ Добавить</button>
+    </form>
+    <ul class="category-list" id="categoryList"></ul>
+  </div>
+</div>
+
+<!-- ====== MODAL: Settings ====== -->
+<div class="modal" id="modalSettings" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-medium">
+    <button class="modal-close" data-close>×</button>
+    <h2>⚙️ Настройки</h2>
+    <form id="settingsForm" class="form-grid">
+
+      <fieldset class="editor-section section-main full">
+        <legend><span class="section-icon">🏪</span> Магазин</legend>
+        <div class="section-grid">
+          <label class="full">
+            <span>Название магазина</span>
+            <input type="text" id="setTitle" />
+          </label>
+          <label class="full">
+            <span>Подзаголовок</span>
+            <input type="text" id="setSubtitle" />
+          </label>
+          <label>
+            <span>Валюта</span>
+            <input type="text" id="setCurrency" maxlength="5" />
+          </label>
+          <label>
+            <span>Номер телефона</span>
+            <input type="text" id="setPhone" />
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="editor-section section-defect full">
+        <legend><span class="section-icon">💬</span> «Как заказать?» — модалка</legend>
+        <div class="section-grid">
+          <label>
+            <span>Название мессенджера</span>
+            <input type="text" id="setMessengerName" placeholder="Max / Telegram / WhatsApp" />
+          </label>
+          <label>
+            <span>Ссылка из модалки «Как заказать?»</span>
+            <input type="url" id="setMessengerLink" placeholder="https://max.ru/u/..." />
+          </label>
+        </div>
+        <label>
+          <span>Текст в модалке «Как заказать?»</span>
+          <textarea id="setHowto" rows="3"></textarea>
+        </label>
+      </fieldset>
+
+      <fieldset class="editor-section section-highlight full">
+        <legend><span class="section-icon">✨</span> Оформление заказа из корзины</legend>
+        <label>
+          <span>Ссылка для кнопки «Оформить заказ»</span>
+          <input type="url" id="setOrderLink" placeholder="https://max.ru/u/..." />
+        </label>
+        <div class="section-grid">
+          <label>
+            <span>Приветствие в начале заказа</span>
+            <input type="text" id="setOrderGreeting" placeholder="Здравствуйте! Я хочу сделать заказ:" />
+          </label>
+          <label>
+            <span>Текст в конце заказа</span>
+            <input type="text" id="setOrderFooter" placeholder="Подскажите по наличию и доставке" />
+          </label>
+        </div>
+        <p class="hint">
+          При нажатии на «Оформить заказ» в корзине: текст с приветствием, списком товаров (артикул, название, цена)
+          и итогом автоматически копируется в буфер обмена, затем открывается указанная ссылка.
+        </p>
+      </fieldset>
+
+      <fieldset class="editor-section section-photos full">
+        <legend><span class="section-icon">🔐</span> Безопасность</legend>
+        <label>
+          <span>Новый пароль администратора</span>
+          <input type="text" id="setPassword" placeholder="Оставьте пустым, чтобы не менять" autocomplete="new-password" />
+        </label>
+      </fieldset>
+
+      <div class="form-actions full">
+        <button type="button" class="btn btn-secondary" data-close>Отмена</button>
+        <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ====== MODAL: Stats ====== -->
+<div class="modal" id="modalStats" hidden>
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-content modal-medium">
+    <button class="modal-close" data-close>×</button>
+    <h2>📊 Статистика</h2>
+    <div id="statsContent" class="stats"></div>
+  </div>
+</div>
+
+<!-- ====== Toast notifications ====== -->
+<div id="toasts" class="toasts"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
