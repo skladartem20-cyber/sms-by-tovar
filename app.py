@@ -294,6 +294,12 @@ def checkout():
     return render_template("checkout_success.html", **ctx)
 
 
+@app.route("/delivery")
+def delivery_info():
+    ctx = base_context()
+    return render_template("delivery.html", **ctx)
+
+
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
     return send_from_directory(config.UPLOADS_PATH, filename)
@@ -498,21 +504,26 @@ def admin_product_new():
     categories = fetch_categories()
     if request.method == "POST":
         data = _product_form_data()
-        with db.db_cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO products (number, title, price, old_price, fault, description, "
-                "weight, length, width, height, video_url, category_id, featured, pinned, is_top, "
-                "is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    data["number"], data["title"], data["price"], data["old_price"], data["fault"],
-                    data["description"], data["weight"], data["length"], data["width"], data["height"],
-                    data["video_url"], data["category_id"], data["featured"], data["pinned"], data["is_top"],
-                    data["is_active"], db.now(),
-                ),
-            )
-            new_id = cur.lastrowid
-        _handle_photo_uploads(new_id)
-        return redirect(url_for("admin_products"))
+        try:
+            with db.db_cursor(commit=True) as cur:
+                cur.execute(
+                    "INSERT INTO products (number, title, price, old_price, fault, description, "
+                    "weight, length, width, height, video_url, category_id, featured, pinned, is_top, "
+                    "is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        data["number"], data["title"], data["price"], data["old_price"], data["fault"],
+                        data["description"], data["weight"], data["length"], data["width"], data["height"],
+                        data["video_url"], data["category_id"], data["featured"], data["pinned"], data["is_top"],
+                        data["is_active"], db.now(),
+                    ),
+                )
+                new_id = cur.lastrowid
+            _handle_photo_uploads(new_id)
+            flash("Товар создан", "success")
+            return redirect(url_for("admin_product_edit", product_id=new_id))
+        except Exception as exc:
+            flash(f"Не удалось создать товар: {exc}", "error")
+            return render_template("admin/product_form.html", product=None, photos=[], categories=categories)
 
     return render_template("admin/product_form.html", product=None, photos=[], categories=categories)
 
@@ -530,19 +541,23 @@ def admin_product_edit(product_id):
 
     if request.method == "POST":
         data = _product_form_data()
-        with db.db_cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE products SET number=?, title=?, price=?, old_price=?, fault=?, description=?, "
-                "weight=?, length=?, width=?, height=?, video_url=?, category_id=?, featured=?, "
-                "pinned=?, is_top=?, is_active=? WHERE id=?",
-                (
-                    data["number"], data["title"], data["price"], data["old_price"], data["fault"],
-                    data["description"], data["weight"], data["length"], data["width"], data["height"],
-                    data["video_url"], data["category_id"], data["featured"], data["pinned"], data["is_top"],
-                    data["is_active"], product_id,
-                ),
-            )
-        _handle_photo_uploads(product_id)
+        try:
+            with db.db_cursor(commit=True) as cur:
+                cur.execute(
+                    "UPDATE products SET number=?, title=?, price=?, old_price=?, fault=?, description=?, "
+                    "weight=?, length=?, width=?, height=?, video_url=?, category_id=?, featured=?, "
+                    "pinned=?, is_top=?, is_active=? WHERE id=?",
+                    (
+                        data["number"], data["title"], data["price"], data["old_price"], data["fault"],
+                        data["description"], data["weight"], data["length"], data["width"], data["height"],
+                        data["video_url"], data["category_id"], data["featured"], data["pinned"], data["is_top"],
+                        data["is_active"], product_id,
+                    ),
+                )
+            _handle_photo_uploads(product_id)
+            flash("Товар сохранён", "success")
+        except Exception as exc:
+            flash(f"Не удалось сохранить товар: {exc}", "error")
         return redirect(url_for("admin_product_edit", product_id=product_id))
 
     with db.db_cursor() as cur:
@@ -742,7 +757,9 @@ def admin_review_delete(shot_id):
 @admin_required
 def admin_settings():
     if request.method == "POST":
-        for key in ["site_title", "contact_phone", "contact_name", "ship_address", "telegram_proxy_url"]:
+        for key in ["site_title", "contact_phone", "contact_name", "ship_address",
+                    "telegram_proxy_scheme", "telegram_proxy_ip", "telegram_proxy_port",
+                    "telegram_proxy_login", "telegram_proxy_password"]:
             value = request.form.get(key)
             if value is not None:
                 db.set_setting(key, value.strip())

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Доставка — {{ site_title }}{% endblock %}
+{% block content %}
+<div class="toolbar"><h1>Доставка</h1></div>
+
+<div class="delivery-page">
+  <p>Отправка осуществляется из <b>г. Уссурийск, Приморский край</b>.</p>
+
+  <div class="delivery-companies">
+    <div class="delivery-company priority">
+      <span class="badge">В приоритете</span>
+      <b>ПЭК</b>
+      <p>Стабильные сроки, отлаженная работа с этой компанией.</p>
+    </div>
+    <div class="delivery-company priority">
+      <span class="badge">В приоритете</span>
+      <b>Энергия</b>
+      <p>Стабильные сроки, отлаженная работа с этой компанией.</p>
+    </div>
+    <div class="delivery-company">
+      <b>Любая другая ТК</b>
+      <p>Скажите нам при оформлении заказа — отправим удобной вам транспортной компанией.</p>
+    </div>
+  </div>
+
+  <p>После оформления заказа {{ contact_name }} свяжется с вами по указанному номеру
+  ({{ contact_phone }}), чтобы согласовать способ доставки, транспортную компанию и адрес
+  пункта выдачи.</p>
+
+  <a class="btn btn-dark" href="{{ url_for('index') }}">Вернуться в каталог</a>
+</div>
+{% endblock %}

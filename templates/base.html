@@ -13,6 +13,7 @@
 <div class="trust-strip">
   <div class="container">
     <span>📍 Отправка из <b>{{ ship_address }}</b></span>
+    <a href="{{ url_for('delivery_info') }}" style="color:#fff;text-decoration:underline;">🚚 Доставка</a>
     <span>📞 <b>{{ contact_phone }}</b></span>
     <span>✅ <b>Все товары проверены</b> на работоспособность</span>
   </div>
@@ -54,6 +55,10 @@
     <div>
       <h4>Контакты</h4>
       <p>{{ contact_name }}<br>{{ contact_phone }}<br>Отправка: {{ ship_address }}</p>
+    </div>
+    <div>
+      <h4>Доставка</h4>
+      <p><a href="{{ url_for('delivery_info') }}" style="color:var(--paper-dim);text-decoration:underline;">Из г. Уссурийск, ПЭК / Энергия →</a></p>
     </div>
     <div>
       <h4>Почему дешевле</h4>

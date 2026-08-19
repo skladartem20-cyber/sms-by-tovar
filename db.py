@@ -86,14 +86,20 @@ DEFAULT_SETTINGS = {
     "contact_name": config.CONTACT_NAME_DEFAULT,
     "ship_address": config.SHIP_ADDRESS_DEFAULT,
     "reviews_enabled": "1",
-    "telegram_proxy_url": config.TELEGRAM_PROXY_URL_DEFAULT,
+    "telegram_proxy_scheme": "socks5",
+    "telegram_proxy_ip": "",
+    "telegram_proxy_port": "",
+    "telegram_proxy_login": "",
+    "telegram_proxy_password": "",
 }
 
 
 def get_connection():
-    conn = sqlite3.connect(config.DATABASE_PATH)
+    conn = sqlite3.connect(config.DATABASE_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 15000")
     return conn
 
 
@@ -105,6 +111,9 @@ def db_cursor(commit=False):
         yield cur
         if commit:
             conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -149,6 +158,27 @@ def _migrate(conn):
     orders_cols = existing_columns("orders")
     if "processed" not in orders_cols:
         conn.execute("ALTER TABLE orders ADD COLUMN processed INTEGER NOT NULL DEFAULT 0")
+
+    # Разбираем старый единый telegram_proxy_url на отдельные поля, если они ещё не заполнены
+    old_row = conn.execute("SELECT value FROM settings WHERE key = 'telegram_proxy_url'").fetchone()
+    new_ip_row = conn.execute("SELECT value FROM settings WHERE key = 'telegram_proxy_ip'").fetchone()
+    if old_row and old_row["value"] and not (new_ip_row and new_ip_row["value"]):
+        import re
+        m = re.match(r"^(\w+)://(?:([^:]+):([^@]+)@)?([^:/]+)(?::(\d+))?/?$", old_row["value"].strip())
+        if m:
+            scheme, login, password, ip, port = m.groups()
+            for key, val in [
+                ("telegram_proxy_scheme", scheme or "socks5"),
+                ("telegram_proxy_ip", ip or ""),
+                ("telegram_proxy_port", port or ""),
+                ("telegram_proxy_login", login or ""),
+                ("telegram_proxy_password", password or ""),
+            ]:
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, val),
+                )
 
     conn.commit()
 

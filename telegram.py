@@ -3,6 +3,20 @@ import config
 import db
 
 
+def build_proxy_url(settings):
+    ip = (settings.get("telegram_proxy_ip") or "").strip()
+    if not ip:
+        return None
+    scheme = settings.get("telegram_proxy_scheme") or "socks5"
+    port = (settings.get("telegram_proxy_port") or "").strip()
+    login = (settings.get("telegram_proxy_login") or "").strip()
+    password = (settings.get("telegram_proxy_password") or "").strip()
+
+    auth = f"{login}:{password}@" if login else ""
+    host = f"{ip}:{port}" if port else ip
+    return f"{scheme}://{auth}{host}"
+
+
 def send_order_notification(order):
     token = config.TELEGRAM_BOT_TOKEN_DEFAULT
     chat_id = config.TELEGRAM_CHAT_ID_DEFAULT
@@ -11,7 +25,7 @@ def send_order_notification(order):
         return False
 
     settings = db.get_settings()
-    proxy_url = settings.get("telegram_proxy_url", "")
+    proxy_url = build_proxy_url(settings)
 
     lines = [
         "🆕 Новый заказ",

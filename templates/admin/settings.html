@@ -33,7 +33,37 @@
   </p>
 
   <label>Прокси для Telegram API (необязательно)</label>
-  <input type="text" name="telegram_proxy_url" value="{{ settings.telegram_proxy_url }}" placeholder="socks5://login:password@host:port">
+  <div class="row2">
+    <div>
+      <label style="margin-top:0;">Тип</label>
+      <select name="telegram_proxy_scheme">
+        <option value="socks5" {% if settings.telegram_proxy_scheme == 'socks5' %}selected{% endif %}>SOCKS5</option>
+        <option value="http" {% if settings.telegram_proxy_scheme == 'http' %}selected{% endif %}>HTTP</option>
+      </select>
+    </div>
+    <div>
+      <label style="margin-top:0;">IP-адрес</label>
+      <input type="text" name="telegram_proxy_ip" value="{{ settings.telegram_proxy_ip }}" placeholder="123.45.67.89">
+    </div>
+  </div>
+  <div class="row2">
+    <div>
+      <label>Порт</label>
+      <input type="text" name="telegram_proxy_port" value="{{ settings.telegram_proxy_port }}" placeholder="1080">
+    </div>
+    <div></div>
+  </div>
+  <div class="row2">
+    <div>
+      <label>Логин</label>
+      <input type="text" name="telegram_proxy_login" value="{{ settings.telegram_proxy_login }}" autocomplete="off">
+    </div>
+    <div>
+      <label>Пароль</label>
+      <input type="password" name="telegram_proxy_password" value="{{ settings.telegram_proxy_password }}" autocomplete="new-password">
+    </div>
+  </div>
+  <p style="font-size:12px;color:var(--ink-soft);margin-top:4px;">Оставьте IP пустым, если прокси не нужен.</p>
 
   <h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:26px;">Безопасность</h2>
   <label>Новый пароль администратора (оставьте пустым, чтобы не менять)</label>
