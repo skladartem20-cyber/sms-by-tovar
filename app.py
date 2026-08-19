@@ -137,6 +137,22 @@ def index():
     sort = request.args.get("sort", "pinned")
     category_id = request.args.get("category", type=int)
 
+    top_query = (
+        "SELECT p.*, "
+        "(SELECT filename FROM product_photos ph WHERE ph.product_id = p.id "
+        " ORDER BY ph.is_main DESC, ph.sort_order ASC LIMIT 1) AS main_photo "
+        "FROM products p WHERE p.is_active = 1 AND p.is_top = 1 "
+    )
+    top_params = []
+    if category_id:
+        top_query += "AND p.category_id = ? "
+        top_params.append(category_id)
+    top_query += "ORDER BY p.created_at DESC LIMIT 12"
+
+    with db.db_cursor() as cur:
+        cur.execute(top_query, top_params)
+        top_products = [dict(r) for r in cur.fetchall()]
+
     query = (
         "SELECT p.*, "
         "(SELECT filename FROM product_photos ph WHERE ph.product_id = p.id "
@@ -166,6 +182,7 @@ def index():
     ctx = base_context()
     ctx.update({
         "products": products,
+        "top_products": top_products,
         "q": q,
         "sort": sort,
         "active_category": category_id,
@@ -329,7 +346,9 @@ def admin_dashboard():
         cart_adds_count = cur.fetchone()["c"]
         cur.execute("SELECT COUNT(*) c FROM orders")
         orders_count = cur.fetchone()["c"]
-        cur.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 10")
+        cur.execute("SELECT COUNT(*) c FROM orders WHERE processed = 0")
+        orders_unprocessed_count = cur.fetchone()["c"]
+        cur.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 15")
         recent_orders = [dict(r) for r in cur.fetchall()]
 
     return render_template(
@@ -339,13 +358,54 @@ def admin_dashboard():
         visits_count=visits_count,
         cart_adds_count=cart_adds_count,
         orders_count=orders_count,
+        orders_unprocessed_count=orders_unprocessed_count,
         recent_orders=recent_orders,
     )
+
+
+@app.route("/adm/orders/<int:order_id>/toggle-processed", methods=["POST"])
+@admin_required
+def admin_order_toggle_processed(order_id):
+    with db.db_cursor() as cur:
+        cur.execute("SELECT processed FROM orders WHERE id = ?", (order_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+        new_value = 0 if row["processed"] else 1
+    with db.db_cursor(commit=True) as cur:
+        cur.execute("UPDATE orders SET processed = ? WHERE id = ?", (new_value, order_id))
+    return redirect(request.referrer or url_for("admin_dashboard"))
 
 
 @app.route("/adm/stats")
 @admin_required
 def admin_stats():
+    import datetime as _dt
+    today = _dt.date.today()
+    yesterday = today - _dt.timedelta(days=1)
+    week_ago = today - _dt.timedelta(days=7)
+    month_ago = today - _dt.timedelta(days=30)
+
+    def period_counts(date_from, date_to=None):
+        date_to = date_to or today
+        with db.db_cursor() as cur:
+            cur.execute(
+                "SELECT "
+                "SUM(CASE WHEN event='visit' THEN 1 ELSE 0 END) visits, "
+                "SUM(CASE WHEN event='cart_add' THEN 1 ELSE 0 END) cart_adds "
+                "FROM visitors WHERE visit_date >= ? AND visit_date <= ?",
+                (date_from.isoformat(), date_to.isoformat()),
+            )
+            row = cur.fetchone()
+            return {"visits": row["visits"] or 0, "cart_adds": row["cart_adds"] or 0}
+
+    summary = {
+        "today": period_counts(today),
+        "yesterday": period_counts(yesterday, yesterday),
+        "week": period_counts(week_ago),
+        "month": period_counts(month_ago),
+    }
+
     with db.db_cursor() as cur:
         cur.execute(
             "SELECT visit_date, "
@@ -354,7 +414,7 @@ def admin_stats():
             "FROM visitors GROUP BY visit_date ORDER BY visit_date DESC LIMIT 30"
         )
         daily = [dict(r) for r in cur.fetchall()]
-    return render_template("admin/stats.html", daily=daily)
+    return render_template("admin/stats.html", daily=daily, summary=summary)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +487,7 @@ def _product_form_data():
         "category_id": request.form.get("category_id", type=int),
         "featured": 1 if request.form.get("featured") else 0,
         "pinned": 1 if request.form.get("pinned") else 0,
+        "is_top": 1 if request.form.get("is_top") else 0,
         "is_active": 1 if request.form.get("is_active", "1") else 0,
     }
 
@@ -440,12 +501,12 @@ def admin_product_new():
         with db.db_cursor(commit=True) as cur:
             cur.execute(
                 "INSERT INTO products (number, title, price, old_price, fault, description, "
-                "weight, length, width, height, video_url, category_id, featured, pinned, "
-                "is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "weight, length, width, height, video_url, category_id, featured, pinned, is_top, "
+                "is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     data["number"], data["title"], data["price"], data["old_price"], data["fault"],
                     data["description"], data["weight"], data["length"], data["width"], data["height"],
-                    data["video_url"], data["category_id"], data["featured"], data["pinned"],
+                    data["video_url"], data["category_id"], data["featured"], data["pinned"], data["is_top"],
                     data["is_active"], db.now(),
                 ),
             )
@@ -473,11 +534,11 @@ def admin_product_edit(product_id):
             cur.execute(
                 "UPDATE products SET number=?, title=?, price=?, old_price=?, fault=?, description=?, "
                 "weight=?, length=?, width=?, height=?, video_url=?, category_id=?, featured=?, "
-                "pinned=?, is_active=? WHERE id=?",
+                "pinned=?, is_top=?, is_active=? WHERE id=?",
                 (
                     data["number"], data["title"], data["price"], data["old_price"], data["fault"],
                     data["description"], data["weight"], data["length"], data["width"], data["height"],
-                    data["video_url"], data["category_id"], data["featured"], data["pinned"],
+                    data["video_url"], data["category_id"], data["featured"], data["pinned"], data["is_top"],
                     data["is_active"], product_id,
                 ),
             )
@@ -681,8 +742,7 @@ def admin_review_delete(shot_id):
 @admin_required
 def admin_settings():
     if request.method == "POST":
-        for key in ["site_title", "contact_phone", "contact_name", "ship_address",
-                    "telegram_bot_token", "telegram_chat_id", "telegram_proxy_url"]:
+        for key in ["site_title", "contact_phone", "contact_name", "ship_address", "telegram_proxy_url"]:
             value = request.form.get(key)
             if value is not None:
                 db.set_setting(key, value.strip())
@@ -696,7 +756,8 @@ def admin_settings():
         return redirect(url_for("admin_settings"))
 
     settings = db.get_settings()
-    return render_template("admin/settings.html", settings=settings)
+    telegram_configured = bool(config.TELEGRAM_BOT_TOKEN_DEFAULT and config.TELEGRAM_CHAT_ID_DEFAULT)
+    return render_template("admin/settings.html", settings=settings, telegram_configured=telegram_configured)
 
 
 # ---------------------------------------------------------------------------

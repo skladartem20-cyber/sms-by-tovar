@@ -1,0 +1,29 @@
+{% macro product_card(p) %}
+<a class="card" href="{{ url_for('product_detail', product_id=p.id) }}">
+  <div class="thumb">
+    {% if p.main_photo %}
+      <img src="{{ url_for('uploaded_file', filename=p.main_photo) }}" alt="{{ p.title }}" loading="lazy">
+    {% else %}
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#B5AE9C;font-size:12px;">Нет фото</div>
+    {% endif %}
+    {% if p.old_price and p.old_price > p.price %}
+      <span class="sticker">-{{ ((1 - p.price / p.old_price) * 100) | round | int }}%</span>
+    {% endif %}
+    {% if p.featured %}<span class="sticker super">СУПЕР ЦЕНА</span>{% endif %}
+    {% if p.pinned %}<span class="pin-badge">📌 ТОП</span>{% endif %}
+  </div>
+  <div class="body">
+    <div class="number">Арт. {{ p.number }}</div>
+    <div class="title">{{ p.title }}</div>
+    <div class="price-row">
+      <span class="price-new">{{ p.price | int }} ₽</span>
+      {% if p.old_price and p.old_price > p.price %}
+        <span class="price-old">{{ p.old_price | int }} ₽</span>
+      {% endif %}
+    </div>
+    {% if p.fault %}
+      <div class="fault-preview">⚠ {{ p.fault }}</div>
+    {% endif %}
+  </div>
+</a>
+{% endmacro %}

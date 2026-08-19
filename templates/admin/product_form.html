@@ -60,6 +60,10 @@
     <label for="featured" style="margin:0;">Супер цена (стикер)</label>
   </div>
   <div class="adm-checkbox">
+    <input type="checkbox" name="is_top" id="is_top" {% if product and product.is_top %}checked{% endif %}>
+    <label for="is_top" style="margin:0;">Показывать в слайдере «Топ позиции»</label>
+  </div>
+  <div class="adm-checkbox">
     <input type="checkbox" name="is_active" id="is_active" {% if not product or product.is_active %}checked{% endif %}>
     <label for="is_active" style="margin:0;">Показывать на сайте</label>
   </div>

@@ -8,23 +8,31 @@
   <div class="stat-card"><div class="num">{{ visits_count }}</div><div class="lbl">Посещений</div></div>
   <div class="stat-card"><div class="num">{{ cart_adds_count }}</div><div class="lbl">Добавлений в корзину</div></div>
   <div class="stat-card"><div class="num">{{ orders_count }}</div><div class="lbl">Заказов</div></div>
+  <div class="stat-card"><div class="num" style="color:var(--stamp-dark);">{{ orders_unprocessed_count }}</div><div class="lbl">Необработанных заказов</div></div>
 </div>
 
 <h2 style="font-family:var(--display);text-transform:uppercase;font-size:16px;margin-top:26px;">Последние заказы</h2>
 <table class="adm-table">
-  <thead><tr><th>#</th><th>Имя</th><th>Телефон</th><th>Сумма</th><th>Telegram</th><th>Дата</th></tr></thead>
+  <thead><tr><th>#</th><th>Имя</th><th>Телефон</th><th>Сумма</th><th>Telegram</th><th>Дата</th><th>Статус</th></tr></thead>
   <tbody>
   {% for o in recent_orders %}
-    <tr>
+    <tr {% if not o.processed %}style="background:#FBEFE9;"{% endif %}>
       <td>{{ o.id }}</td>
       <td>{{ o.customer_name }}</td>
       <td>{{ o.customer_phone }}</td>
       <td>{{ o.total | int }} ₽</td>
       <td>{{ "✅" if o.telegram_sent else "—" }}</td>
       <td>{{ o.created_at[:16] }}</td>
+      <td>
+        <form method="post" action="{{ url_for('admin_order_toggle_processed', order_id=o.id) }}">
+          <button type="submit" class="btn {{ 'btn-outline' if not o.processed else 'btn-dark' }}" style="padding:5px 10px;font-size:12px;">
+            {{ "✅ Обработан" if o.processed else "Отметить обработанным" }}
+          </button>
+        </form>
+      </td>
     </tr>
   {% else %}
-    <tr><td colspan="6">Заказов пока нет</td></tr>
+    <tr><td colspan="7">Заказов пока нет</td></tr>
   {% endfor %}
   </tbody>
 </table>

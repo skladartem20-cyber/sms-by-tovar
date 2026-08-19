@@ -23,6 +23,7 @@
       <td>
         {% if p.pinned %}📌{% endif %}
         {% if p.featured %}🔥{% endif %}
+        {% if p.is_top %}⭐{% endif %}
       </td>
       <td>{{ "Да" if p.is_active else "Нет" }}</td>
       <td>

@@ -1,7 +1,32 @@
 {% extends "admin/base.html" %}
 {% block title %}Статистика{% endblock %}
 {% block content %}
-<h1>Статистика (последние 30 дней)</h1>
+<h1>Статистика посещений</h1>
+
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="num">{{ summary.today.visits }}</div>
+    <div class="lbl">Сегодня — посещений</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:4px;">В корзину: {{ summary.today.cart_adds }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="num">{{ summary.yesterday.visits }}</div>
+    <div class="lbl">Вчера — посещений</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:4px;">В корзину: {{ summary.yesterday.cart_adds }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="num">{{ summary.week.visits }}</div>
+    <div class="lbl">7 дней — посещений</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:4px;">В корзину: {{ summary.week.cart_adds }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="num">{{ summary.month.visits }}</div>
+    <div class="lbl">30 дней — посещений</div>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:4px;">В корзину: {{ summary.month.cart_adds }}</div>
+  </div>
+</div>
+
+<h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:26px;">По дням (последние 30)</h2>
 <table class="adm-table">
   <thead><tr><th>Дата</th><th>Посещений</th><th>Добавлений в корзину</th><th>Конверсия</th></tr></thead>
   <tbody>

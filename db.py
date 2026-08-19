@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS products (
     category_id INTEGER,
     featured INTEGER NOT NULL DEFAULT 0,
     pinned INTEGER NOT NULL DEFAULT 0,
+    is_top INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     FOREIGN KEY (category_id) REFERENCES categories(id)
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS orders (
     items_json TEXT NOT NULL,
     total REAL NOT NULL,
     telegram_sent INTEGER NOT NULL DEFAULT 0,
+    processed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -84,8 +86,6 @@ DEFAULT_SETTINGS = {
     "contact_name": config.CONTACT_NAME_DEFAULT,
     "ship_address": config.SHIP_ADDRESS_DEFAULT,
     "reviews_enabled": "1",
-    "telegram_bot_token": config.TELEGRAM_BOT_TOKEN_DEFAULT,
-    "telegram_chat_id": config.TELEGRAM_CHAT_ID_DEFAULT,
     "telegram_proxy_url": config.TELEGRAM_PROXY_URL_DEFAULT,
 }
 
@@ -118,6 +118,8 @@ def init_db():
     conn.executescript(SCHEMA)
     conn.commit()
 
+    _migrate(conn)
+
     from werkzeug.security import generate_password_hash
     cur = conn.execute("SELECT value FROM settings WHERE key = 'admin_password_hash'")
     if cur.fetchone() is None:
@@ -133,6 +135,22 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def _migrate(conn):
+    """Добавляет новые колонки в уже существующие таблицы (для сайтов, развёрнутых ранее)."""
+    def existing_columns(table):
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+    products_cols = existing_columns("products")
+    if "is_top" not in products_cols:
+        conn.execute("ALTER TABLE products ADD COLUMN is_top INTEGER NOT NULL DEFAULT 0")
+
+    orders_cols = existing_columns("orders")
+    if "processed" not in orders_cols:
+        conn.execute("ALTER TABLE orders ADD COLUMN processed INTEGER NOT NULL DEFAULT 0")
+
+    conn.commit()
 
 
 def get_settings():

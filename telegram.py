@@ -1,15 +1,17 @@
 import requests
+import config
 import db
 
 
 def send_order_notification(order):
-    settings = db.get_settings()
-    token = settings.get("telegram_bot_token", "")
-    chat_id = settings.get("telegram_chat_id", "")
-    proxy_url = settings.get("telegram_proxy_url", "")
+    token = config.TELEGRAM_BOT_TOKEN_DEFAULT
+    chat_id = config.TELEGRAM_CHAT_ID_DEFAULT
 
     if not token or not chat_id:
         return False
+
+    settings = db.get_settings()
+    proxy_url = settings.get("telegram_proxy_url", "")
 
     lines = [
         "🆕 Новый заказ",

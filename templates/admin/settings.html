@@ -18,11 +18,19 @@
   <input type="text" name="ship_address" value="{{ settings.ship_address }}">
 
   <h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:26px;">Telegram-уведомления</h2>
-  <label>Bot Token</label>
-  <input type="text" name="telegram_bot_token" value="{{ settings.telegram_bot_token }}" placeholder="123456:ABC-DEF...">
-
-  <label>Chat ID</label>
-  <input type="text" name="telegram_chat_id" value="{{ settings.telegram_chat_id }}" placeholder="-1001234567890">
+  <p style="font-size:13px;color:var(--ink-soft);">
+    Bot Token и Chat ID задаются переменными окружения <code>TELEGRAM_BOT_TOKEN</code> и
+    <code>TELEGRAM_CHAT_ID</code> в панели Timeweb Cloud (App Platform → Переменные окружения),
+    а не здесь — так безопаснее. После изменения переменных потребуется перезапуск контейнера.
+  </p>
+  <p style="font-size:13.5px;">
+    Статус:
+    {% if telegram_configured %}
+      <span style="color:var(--ok);font-weight:600;">✅ настроено</span>
+    {% else %}
+      <span style="color:var(--stamp-dark);font-weight:600;">⚠ не настроено — заполните TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID</span>
+    {% endif %}
+  </p>
 
   <label>Прокси для Telegram API (необязательно)</label>
   <input type="text" name="telegram_proxy_url" value="{{ settings.telegram_proxy_url }}" placeholder="socks5://login:password@host:port">
