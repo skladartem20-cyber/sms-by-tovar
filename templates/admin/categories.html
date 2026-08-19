@@ -1,0 +1,32 @@
+{% extends "admin/base.html" %}
+{% block title %}Категории{% endblock %}
+{% block content %}
+<h1>Категории</h1>
+
+<form method="post" class="adm-form" style="display:flex;gap:10px;align-items:flex-end;">
+  <div style="flex:1;">
+    <label>Новая категория</label>
+    <input type="text" name="name" required>
+  </div>
+  <button type="submit" class="btn btn-primary">Добавить</button>
+</form>
+
+<table class="adm-table" style="margin-top:20px;">
+  <thead><tr><th>Название</th><th>Товаров</th><th></th></tr></thead>
+  <tbody>
+  {% for c in categories %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td>{{ c.product_count }}</td>
+      <td>
+        <form method="post" action="{{ url_for('admin_category_delete', cat_id=c.id) }}" onsubmit="return confirm('Удалить категорию?');">
+          <button type="submit" style="border:none;background:none;color:var(--stamp);cursor:pointer;">Удалить</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3">Категорий пока нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

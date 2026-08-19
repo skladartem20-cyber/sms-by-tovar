@@ -1,0 +1,31 @@
+{% extends "admin/base.html" %}
+{% block title %}Дашборд{% endblock %}
+{% block content %}
+<h1>Дашборд</h1>
+<div class="stat-cards">
+  <div class="stat-card"><div class="num">{{ products_count }}</div><div class="lbl">Товаров</div></div>
+  <div class="stat-card"><div class="num">{{ categories_count }}</div><div class="lbl">Категорий</div></div>
+  <div class="stat-card"><div class="num">{{ visits_count }}</div><div class="lbl">Посещений</div></div>
+  <div class="stat-card"><div class="num">{{ cart_adds_count }}</div><div class="lbl">Добавлений в корзину</div></div>
+  <div class="stat-card"><div class="num">{{ orders_count }}</div><div class="lbl">Заказов</div></div>
+</div>
+
+<h2 style="font-family:var(--display);text-transform:uppercase;font-size:16px;margin-top:26px;">Последние заказы</h2>
+<table class="adm-table">
+  <thead><tr><th>#</th><th>Имя</th><th>Телефон</th><th>Сумма</th><th>Telegram</th><th>Дата</th></tr></thead>
+  <tbody>
+  {% for o in recent_orders %}
+    <tr>
+      <td>{{ o.id }}</td>
+      <td>{{ o.customer_name }}</td>
+      <td>{{ o.customer_phone }}</td>
+      <td>{{ o.total | int }} ₽</td>
+      <td>{{ "✅" if o.telegram_sent else "—" }}</td>
+      <td>{{ o.created_at[:16] }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6">Заказов пока нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

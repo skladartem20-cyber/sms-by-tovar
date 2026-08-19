@@ -1,0 +1,8 @@
+<section class="reviews-section">
+  <h2>Отзывы наших клиентов</h2>
+  <div class="reviews-carousel">
+    {% for shot in review_screenshots %}
+      <img src="{{ url_for('review_file', filename=shot.filename) }}" alt="Отзыв клиента" loading="lazy">
+    {% endfor %}
+  </div>
+</section>

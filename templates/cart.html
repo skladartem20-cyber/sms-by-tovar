@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Корзина — {{ site_title }}{% endblock %}
+{% block content %}
+<div class="toolbar"><h1>Корзина</h1></div>
+
+{% if items %}
+  {% for item in items %}
+  <div class="cart-item">
+    <img src="{% if item.main_photo %}{{ url_for('uploaded_file', filename=item.main_photo) }}{% endif %}" alt="">
+    <div>
+      <div class="number">Арт. {{ item.number }}</div>
+      <div class="title">{{ item.title }}</div>
+      <div class="qty-controls">
+        <form method="post" action="{{ url_for('cart_update') }}">
+          <input type="hidden" name="product_id" value="{{ item.id }}">
+          <button name="action" value="dec">−</button>
+        </form>
+        <span>{{ item.qty }} шт.</span>
+        <form method="post" action="{{ url_for('cart_update') }}">
+          <input type="hidden" name="product_id" value="{{ item.id }}">
+          <button name="action" value="inc">+</button>
+        </form>
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-weight:700;">{{ item.sum | int }} ₽</div>
+      <form method="post" action="{{ url_for('cart_update') }}" style="margin-top:8px;">
+        <input type="hidden" name="product_id" value="{{ item.id }}">
+        <button name="action" value="remove" class="btn btn-outline" style="padding:6px 10px;font-size:12px;">Удалить</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="cart-summary">
+    <div class="cart-total"><span>Итого:</span><span>{{ total | int }} ₽</span></div>
+    <form class="checkout-form" method="post" action="{{ url_for('checkout') }}">
+      <input type="text" name="name" placeholder="Ваше имя" required>
+      <input type="tel" name="phone" placeholder="Номер телефона" required>
+      <button type="submit" class="btn btn-primary btn-block">Оформить заказ</button>
+    </form>
+  </div>
+{% else %}
+<div class="empty-state">
+  <p>Корзина пуста.</p>
+  <a class="btn btn-dark" href="{{ url_for('index') }}">Перейти в каталог</a>
+</div>
+{% endif %}
+{% endblock %}

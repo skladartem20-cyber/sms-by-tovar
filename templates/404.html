@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Страница не найдена — {{ site_title }}{% endblock %}
+{% block content %}
+<div class="empty-state">
+  <h1 style="font-family:var(--display);text-transform:uppercase;">404</h1>
+  <p>Страница не найдена.</p>
+  <a class="btn btn-dark" href="{{ url_for('index') }}">На главную</a>
+</div>
+{% endblock %}

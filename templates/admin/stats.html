@@ -1,0 +1,20 @@
+{% extends "admin/base.html" %}
+{% block title %}Статистика{% endblock %}
+{% block content %}
+<h1>Статистика (последние 30 дней)</h1>
+<table class="adm-table">
+  <thead><tr><th>Дата</th><th>Посещений</th><th>Добавлений в корзину</th><th>Конверсия</th></tr></thead>
+  <tbody>
+  {% for d in daily %}
+    <tr>
+      <td>{{ d.visit_date }}</td>
+      <td>{{ d.visits }}</td>
+      <td>{{ d.cart_adds }}</td>
+      <td>{{ ((d.cart_adds / d.visits * 100) if d.visits else 0) | round(1) }}%</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4">Данных пока нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

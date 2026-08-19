@@ -1,0 +1,31 @@
+{% extends "admin/base.html" %}
+{% block title %}Бэкапы{% endblock %}
+{% block content %}
+<h1>Резервные копии</h1>
+
+<h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;">Создать бэкап</h2>
+<p style="font-size:13.5px;color:var(--ink-soft);">Архив содержит store.db, products.csv, categories.csv, settings.json и все фото.</p>
+<a class="btn btn-dark" href="{{ url_for('admin_backup_download') }}">Скачать бэкап (.zip)</a>
+<form method="post" action="{{ url_for('admin_backup_upload_s3') }}" style="display:inline;margin-left:10px;">
+  <button type="submit" class="btn btn-outline">Загрузить в S3 (папка BU_TOVAR)</button>
+</form>
+
+<h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:30px;">Бэкапы в S3</h2>
+<table class="adm-table">
+  <thead><tr><th>Файл</th><th>Размер</th><th>Дата</th></tr></thead>
+  <tbody>
+  {% for b in s3_backups %}
+    <tr><td>{{ b.key }}</td><td>{{ (b.size / 1024) | round(1) }} КБ</td><td>{{ b.modified[:16] }}</td></tr>
+  {% else %}
+    <tr><td colspan="3">S3 не настроен или бэкапов ещё нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:30px;">Импорт бэкапа</h2>
+<p style="font-size:13.5px;color:var(--ink-soft);">Загрузите zip-архив со структурой backup/ (store.db или CSV + photos/).</p>
+<form method="post" action="{{ url_for('admin_backup_import') }}" enctype="multipart/form-data" class="adm-form">
+  <input type="file" name="backup_file" accept=".zip" required>
+  <button type="submit" class="btn btn-primary" style="margin-top:12px;" onclick="return confirm('Импорт может перезаписать существующие товары с теми же ID. Продолжить?');">Импортировать</button>
+</form>
+{% endblock %}

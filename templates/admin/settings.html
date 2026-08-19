@@ -1,0 +1,38 @@
+{% extends "admin/base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+
+<form class="adm-form" method="post">
+  <h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:0;">Витрина</h2>
+  <label>Название сайта</label>
+  <input type="text" name="site_title" value="{{ settings.site_title }}">
+
+  <label>Имя контактного лица</label>
+  <input type="text" name="contact_name" value="{{ settings.contact_name }}">
+
+  <label>Телефон для связи</label>
+  <input type="text" name="contact_phone" value="{{ settings.contact_phone }}">
+
+  <label>Адрес отправки</label>
+  <input type="text" name="ship_address" value="{{ settings.ship_address }}">
+
+  <h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:26px;">Telegram-уведомления</h2>
+  <label>Bot Token</label>
+  <input type="text" name="telegram_bot_token" value="{{ settings.telegram_bot_token }}" placeholder="123456:ABC-DEF...">
+
+  <label>Chat ID</label>
+  <input type="text" name="telegram_chat_id" value="{{ settings.telegram_chat_id }}" placeholder="-1001234567890">
+
+  <label>Прокси для Telegram API (необязательно)</label>
+  <input type="text" name="telegram_proxy_url" value="{{ settings.telegram_proxy_url }}" placeholder="socks5://login:password@host:port">
+
+  <h2 style="font-family:var(--display);text-transform:uppercase;font-size:15px;margin-top:26px;">Безопасность</h2>
+  <label>Новый пароль администратора (оставьте пустым, чтобы не менять)</label>
+  <input type="password" name="new_admin_password" autocomplete="new-password">
+
+  <div style="margin-top:22px;">
+    <button type="submit" class="btn btn-primary">Сохранить настройки</button>
+  </div>
+</form>
+{% endblock %}

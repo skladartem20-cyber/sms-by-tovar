@@ -1,813 +1,762 @@
-# Уцененные товары — складской сервис
-# Backend: Flask + SQLite
 import os
-import io
-import csv
-import json
-import shutil
-import sqlite3
-import zipfile
-import secrets
-import datetime as dt
-from functools import wraps
-from pathlib import Path
+import uuid
+import functools
 
 from flask import (
-    Flask, request, jsonify, render_template,
-    session, send_file, send_from_directory, abort, g
+    Flask, render_template, request, redirect, url_for, session,
+    send_from_directory, flash, jsonify, abort, Response
 )
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-from werkzeug.middleware.proxy_fix import ProxyFix
-from PIL import Image, ImageOps
+from PIL import Image
 
-# ----------------------------- Configuration ---------------------------------
+import config
+import db
+import telegram
+import backup as backup_module
+from startup_import import run_startup_import
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
-UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", BASE_DIR / "static" / "uploads"))
-DB_PATH = DATA_DIR / "store.db"
+app = Flask(__name__)
+app.config["SECRET_KEY"] = config.SECRET_KEY
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_MB * 1024 * 1024
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-ALLOWED_EXT = {"png", "jpg", "jpeg", "webp", "gif", "bmp"}
-MAX_PHOTOS_PER_PRODUCT = 5
-MAX_PHOTO_SIZE_MB = 12
-THUMB_SIZE = (640, 640)
-
-DEFAULT_PASSWORD = os.environ.get("ADMIN_PASSWORD", "010203")
-
-def _load_or_create_secret_key() -> str:
-    """SECRET_KEY должен быть общим для всех воркеров Gunicorn и переживать
-    перезапуски, иначе сессия разлогинивается между запросами."""
-    env_key = os.environ.get("SECRET_KEY")
-    if env_key:
-        return env_key
-    key_file = DATA_DIR / ".secret_key"
-    if key_file.exists():
-        try:
-            val = key_file.read_text().strip()
-            if val:
-                return val
-        except OSError:
-            pass
-    new_key = secrets.token_hex(32)
-    try:
-        key_file.write_text(new_key)
-        os.chmod(key_file, 0o600)
-    except OSError:
-        pass
-    return new_key
+db.init_db()
+run_startup_import()
 
 
-app = Flask(__name__, static_folder="static", template_folder="templates")
-app.config["MAX_CONTENT_LENGTH"] = MAX_PHOTO_SIZE_MB * 1024 * 1024 * MAX_PHOTOS_PER_PRODUCT
-app.config["SECRET_KEY"] = _load_or_create_secret_key()
-app.config["JSON_AS_ASCII"] = False
-# Сессия живёт 30 дней; SameSite=Lax корректно работает за reverse-proxy Timeweb
-app.config["PERMANENT_SESSION_LIFETIME"] = dt.timedelta(days=30)
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_HTTPONLY"] = True
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
 
-# Корректные scheme/host за reverse-proxy (Timeweb Cloud, nginx и т.п.)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-
-# ----------------------------- Database --------------------------------------
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS categories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    sort_order INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    number TEXT NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    price REAL NOT NULL DEFAULT 0,
-    defect TEXT DEFAULT '',
-    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-    weight REAL,
-    length REAL,
-    width REAL,
-    height REAL,
-    highlighted INTEGER DEFAULT 0,
-    highlight_label TEXT DEFAULT '',
-    highlight_color TEXT DEFAULT 'green',
-    pinned INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'available',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS photos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    filename TEXT NOT NULL,
-    is_main INTEGER DEFAULT 0,
-    sort_order INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-
-CREATE TABLE IF NOT EXISTS visitors (
-    day TEXT PRIMARY KEY,
-    count INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS visitor_total (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    count INTEGER DEFAULT 0
-);
-
-INSERT OR IGNORE INTO visitor_total (id, count) VALUES (1, 0);
-"""
-
-DEFAULT_SETTINGS = {
-    "phone": "+7 999 616-49-94",
-    "messenger_link": "https://max.ru/u/f9LHodD0cOJEhQbb3wl2z11H_2DB84UCabgu1irqTeeee3BdT8Yo-cinETM",
-    "messenger_name": "Max",
-    "how_to_order_text": (
-        "Чтобы оформить заказ, добавьте нужные товары в корзину, "
-        "затем нажмите «Оформить заказ» — текст заказа автоматически скопируется "
-        "в буфер обмена, а вы будете перенаправлены в мессенджер для отправки."
-    ),
-    "shop_title": "Уцененные товары",
-    "shop_subtitle": "Склад уценки — выгодные предложения",
-    "admin_password": DEFAULT_PASSWORD,
-    "currency": "₽",
-    # Ссылка, куда перенаправлять при оформлении заказа из корзины
-    "order_link": "https://max.ru/u/f9LHodD0cOJEhQbb3wl2z11H_2DB84UCabgu1irqTeeee3BdT8Yo-cinETM",
-    # Шаблон сообщения; плейсхолдеры: {items}, {total}, {count}
-    "order_greeting": "Здравствуйте! Я хочу сделать заказ:",
-    "order_footer": "Подскажите, пожалуйста, по наличию и доставке. Спасибо!",
-}
+def admin_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("is_admin"):
+            return redirect(url_for("admin_login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
 
 
-def get_db() -> sqlite3.Connection:
-    if "db" not in g:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        g.db = conn
-    return g.db
+def get_cart():
+    return session.get("cart", {})
 
 
-@app.teardown_appcontext
-def close_db(_):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+def save_cart(cart):
+    session["cart"] = cart
+    session.modified = True
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
-    for k, v in DEFAULT_SETTINGS.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v)
+def get_cart_items():
+    cart = get_cart()
+    if not cart:
+        return [], 0
+    ids = [int(pid) for pid in cart.keys()]
+    with db.db_cursor() as cur:
+        placeholders = ",".join("?" * len(ids))
+        cur.execute(
+            f"SELECT p.*, "
+            f"(SELECT filename FROM product_photos ph WHERE ph.product_id = p.id "
+            f" ORDER BY ph.is_main DESC, ph.sort_order ASC LIMIT 1) AS main_photo "
+            f"FROM products p WHERE p.id IN ({placeholders})",
+            ids,
         )
-    conn.commit()
-    conn.close()
+        rows = {row["id"]: dict(row) for row in cur.fetchall()}
+
+    items = []
+    total = 0
+    for pid_str, qty in cart.items():
+        pid = int(pid_str)
+        p = rows.get(pid)
+        if not p:
+            continue
+        line_sum = round(p["price"] * qty, 2)
+        total += line_sum
+        items.append({
+            "id": p["id"], "number": p["number"], "title": p["title"],
+            "price": p["price"], "qty": qty, "sum": line_sum,
+            "main_photo": p.get("main_photo"),
+        })
+    return items, round(total, 2)
 
 
-# ----------------------------- Helpers ---------------------------------------
-
-def is_admin() -> bool:
-    return bool(session.get("is_admin"))
-
-
-def admin_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not is_admin():
-            return jsonify({"error": "Доступ запрещён"}), 401
-        return fn(*args, **kwargs)
-    return wrapper
+def log_visit(event="visit", product_id=None):
+    with db.db_cursor(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO visitors (visit_date, ip, event, product_id, created_at) VALUES (?,?,?,?,?)",
+            (db.now()[:10], request.remote_addr, event, product_id, db.now()),
+        )
 
 
-def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+def fetch_categories():
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM categories ORDER BY sort_order ASC, name ASC")
+        return [dict(r) for r in cur.fetchall()]
 
 
-def get_setting(key: str, default: str = "") -> str:
-    db = get_db()
-    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    return row["value"] if row else default
+def fetch_product_main_photo(product_id):
+    with db.db_cursor() as cur:
+        cur.execute(
+            "SELECT filename FROM product_photos WHERE product_id = ? "
+            "ORDER BY is_main DESC, sort_order ASC LIMIT 1",
+            (product_id,),
+        )
+        row = cur.fetchone()
+        return row["filename"] if row else None
 
 
-def set_setting(key: str, value: str):
-    db = get_db()
-    db.execute(
-        "INSERT INTO settings (key, value) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (key, value),
-    )
-    db.commit()
-
-
-def settings_dict() -> dict:
-    db = get_db()
-    return {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM settings")}
-
-
-def product_to_dict(row: sqlite3.Row, photos: list) -> dict:
+def base_context():
+    s = db.get_settings()
+    cart = get_cart()
+    cart_count = sum(cart.values()) if cart else 0
+    reviews_enabled = s.get("reviews_enabled", "1") == "1"
+    screenshots = []
+    if reviews_enabled:
+        with db.db_cursor() as cur:
+            cur.execute("SELECT * FROM review_screenshots ORDER BY sort_order ASC")
+            screenshots = [dict(r) for r in cur.fetchall()]
     return {
-        "id": row["id"],
-        "number": row["number"],
-        "name": row["name"],
-        "description": row["description"] or "",
-        "price": row["price"],
-        "defect": row["defect"] or "",
-        "category_id": row["category_id"],
-        "category_name": row["category_name"] if "category_name" in row.keys() else None,
-        "weight": row["weight"],
-        "length": row["length"],
-        "width": row["width"],
-        "height": row["height"],
-        "highlighted": bool(row["highlighted"]),
-        "highlight_label": row["highlight_label"] or "",
-        "highlight_color": row["highlight_color"] or "green",
-        "pinned": bool(row["pinned"]),
-        "status": row["status"] or "available",
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-        "photos": photos,
+        "site_title": s.get("site_title", config.SITE_TITLE_DEFAULT),
+        "contact_phone": s.get("contact_phone", config.CONTACT_PHONE_DEFAULT),
+        "contact_name": s.get("contact_name", config.CONTACT_NAME_DEFAULT),
+        "ship_address": s.get("ship_address", config.SHIP_ADDRESS_DEFAULT),
+        "reviews_enabled": reviews_enabled,
+        "review_screenshots": screenshots,
+        "categories": fetch_categories(),
+        "cart_count": cart_count,
     }
 
 
-def fetch_photos(product_id: int) -> list:
-    db = get_db()
-    rows = db.execute(
-        "SELECT id, filename, is_main, sort_order FROM photos "
-        "WHERE product_id = ? ORDER BY is_main DESC, sort_order ASC, id ASC",
-        (product_id,),
-    ).fetchall()
-    return [
-        {
-            "id": r["id"],
-            "filename": r["filename"],
-            "url": f"/static/uploads/{r['filename']}",
-            "is_main": bool(r["is_main"]),
-            "sort_order": r["sort_order"],
-        }
-        for r in rows
-    ]
-
-
-def save_photo(file_storage, product_id: int) -> str:
-    """Сохраняет фото с оптимизацией. Возвращает имя файла."""
-    if not allowed_file(file_storage.filename):
-        raise ValueError("Недопустимый формат файла")
-    ext = file_storage.filename.rsplit(".", 1)[1].lower()
-    if ext in ("jpg", "jpeg"):
-        ext = "jpg"
-    unique = secrets.token_hex(8)
-    filename = f"p{product_id}_{unique}.{ext}"
-    full_path = UPLOAD_DIR / filename
-
-    # Optimize / resize
-    try:
-        img = Image.open(file_storage.stream)
-        img = ImageOps.exif_transpose(img)
-        if img.mode in ("RGBA", "P") and ext == "jpg":
-            img = img.convert("RGB")
-        # Resize if too large (preserve aspect)
-        max_side = 1800
-        if max(img.size) > max_side:
-            img.thumbnail((max_side, max_side), Image.LANCZOS)
-        save_kwargs = {}
-        if ext in ("jpg", "jpeg"):
-            save_kwargs = {"quality": 85, "optimize": True}
-            img.save(full_path, "JPEG", **save_kwargs)
-        elif ext == "png":
-            img.save(full_path, "PNG", optimize=True)
-        elif ext == "webp":
-            img.save(full_path, "WEBP", quality=85)
-        else:
-            img.save(full_path)
-    except Exception:
-        # fallback raw save
-        file_storage.stream.seek(0)
-        with open(full_path, "wb") as f:
-            f.write(file_storage.stream.read())
-    return filename
-
-
-def count_visit():
-    today = dt.date.today().isoformat()
-    db = get_db()
-    # Increment only once per session per day
-    last_visit = session.get("last_visit_day")
-    if last_visit != today:
-        db.execute(
-            "INSERT INTO visitors (day, count) VALUES (?, 1) "
-            "ON CONFLICT(day) DO UPDATE SET count = count + 1",
-            (today,),
-        )
-        db.execute("UPDATE visitor_total SET count = count + 1 WHERE id = 1")
-        db.commit()
-        session["last_visit_day"] = today
-
-
-# ----------------------------- Routes: pages ---------------------------------
+# ---------------------------------------------------------------------------
+# public storefront
+# ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
-    count_visit()
-    return render_template("index.html")
+    log_visit("visit")
+    q = request.args.get("q", "").strip()
+    sort = request.args.get("sort", "pinned")
+    category_id = request.args.get("category", type=int)
 
-
-@app.route("/static/uploads/<path:filename>")
-def uploaded_file(filename):
-    return send_from_directory(UPLOAD_DIR, filename)
-
-
-# ----------------------------- API: auth -------------------------------------
-
-@app.post("/api/login")
-def api_login():
-    data = request.get_json(force=True, silent=True) or {}
-    password = data.get("password", "")
-    if password == get_setting("admin_password", DEFAULT_PASSWORD):
-        session["is_admin"] = True
-        session.permanent = True
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "Неверный пароль"}), 401
-
-
-@app.post("/api/logout")
-def api_logout():
-    session.pop("is_admin", None)
-    return jsonify({"ok": True})
-
-
-@app.get("/api/me")
-def api_me():
-    return jsonify({"is_admin": is_admin()})
-
-
-# ----------------------------- API: settings ---------------------------------
-
-@app.get("/api/settings")
-def api_get_settings():
-    s = settings_dict()
-    # Скрываем пароль для не-админов
-    if not is_admin():
-        s.pop("admin_password", None)
-    return jsonify(s)
-
-
-@app.post("/api/settings")
-@admin_required
-def api_update_settings():
-    data = request.get_json(force=True, silent=True) or {}
-    allowed_keys = set(DEFAULT_SETTINGS.keys())
-    for k, v in data.items():
-        if k in allowed_keys and v is not None:
-            set_setting(k, str(v))
-    return jsonify({"ok": True, "settings": settings_dict()})
-
-
-# ----------------------------- API: categories -------------------------------
-
-@app.get("/api/categories")
-def api_categories():
-    db = get_db()
-    rows = db.execute(
-        "SELECT c.id, c.name, c.sort_order, "
-        "(SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) AS product_count "
-        "FROM categories c ORDER BY c.sort_order ASC, c.name ASC"
-    ).fetchall()
-    return jsonify([dict(r) for r in rows])
-
-
-@app.post("/api/categories")
-@admin_required
-def api_create_category():
-    data = request.get_json(force=True, silent=True) or {}
-    name = (data.get("name") or "").strip()
-    if not name:
-        return jsonify({"error": "Название обязательно"}), 400
-    db = get_db()
-    try:
-        cur = db.execute(
-            "INSERT INTO categories (name, sort_order) VALUES (?, ?)",
-            (name, int(data.get("sort_order") or 0)),
-        )
-        db.commit()
-        return jsonify({"id": cur.lastrowid, "name": name})
-    except sqlite3.IntegrityError:
-        return jsonify({"error": "Категория с таким названием уже существует"}), 400
-
-
-@app.put("/api/categories/<int:cid>")
-@admin_required
-def api_update_category(cid: int):
-    data = request.get_json(force=True, silent=True) or {}
-    db = get_db()
-    if "name" in data:
-        db.execute("UPDATE categories SET name = ? WHERE id = ?", (data["name"].strip(), cid))
-    if "sort_order" in data:
-        db.execute("UPDATE categories SET sort_order = ? WHERE id = ?", (int(data["sort_order"]), cid))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.delete("/api/categories/<int:cid>")
-@admin_required
-def api_delete_category(cid: int):
-    db = get_db()
-    db.execute("DELETE FROM categories WHERE id = ?", (cid,))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-# ----------------------------- API: products ---------------------------------
-
-@app.get("/api/products")
-def api_products():
-    db = get_db()
-    rows = db.execute(
-        "SELECT p.*, c.name AS category_name "
-        "FROM products p LEFT JOIN categories c ON c.id = p.category_id "
-        "ORDER BY p.pinned DESC, p.created_at DESC"
-    ).fetchall()
-    products = []
-    for r in rows:
-        products.append(product_to_dict(r, fetch_photos(r["id"])))
-    return jsonify(products)
-
-
-@app.get("/api/products/<int:pid>")
-def api_get_product(pid: int):
-    db = get_db()
-    r = db.execute(
-        "SELECT p.*, c.name AS category_name "
-        "FROM products p LEFT JOIN categories c ON c.id = p.category_id "
-        "WHERE p.id = ?",
-        (pid,),
-    ).fetchone()
-    if not r:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(product_to_dict(r, fetch_photos(pid)))
-
-
-@app.post("/api/products")
-@admin_required
-def api_create_product():
-    data = request.get_json(force=True, silent=True) or {}
-    required = ["number", "name", "price"]
-    for k in required:
-        if data.get(k) in (None, ""):
-            return jsonify({"error": f"Поле '{k}' обязательно"}), 400
-    db = get_db()
-    cur = db.execute(
-        """INSERT INTO products
-           (number, name, description, price, defect, category_id,
-            weight, length, width, height,
-            highlighted, highlight_label, highlight_color, pinned, status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            str(data.get("number", "")).strip(),
-            str(data.get("name", "")).strip(),
-            str(data.get("description", "") or ""),
-            float(data.get("price") or 0),
-            str(data.get("defect", "") or ""),
-            data.get("category_id") or None,
-            float(data["weight"]) if data.get("weight") not in (None, "") else None,
-            float(data["length"]) if data.get("length") not in (None, "") else None,
-            float(data["width"]) if data.get("width") not in (None, "") else None,
-            float(data["height"]) if data.get("height") not in (None, "") else None,
-            1 if data.get("highlighted") else 0,
-            str(data.get("highlight_label", "") or ""),
-            str(data.get("highlight_color", "green") or "green"),
-            1 if data.get("pinned") else 0,
-            str(data.get("status", "available") or "available"),
-        ),
+    query = (
+        "SELECT p.*, "
+        "(SELECT filename FROM product_photos ph WHERE ph.product_id = p.id "
+        " ORDER BY ph.is_main DESC, ph.sort_order ASC LIMIT 1) AS main_photo "
+        "FROM products p WHERE p.is_active = 1 "
     )
-    db.commit()
-    return jsonify({"id": cur.lastrowid})
+    params = []
+    if q:
+        query += "AND (p.title LIKE ? OR p.number LIKE ?) "
+        params += [f"%{q}%", f"%{q}%"]
+    if category_id:
+        query += "AND p.category_id = ? "
+        params.append(category_id)
 
-
-@app.put("/api/products/<int:pid>")
-@admin_required
-def api_update_product(pid: int):
-    data = request.get_json(force=True, silent=True) or {}
-    db = get_db()
-    fields_map = {
-        "number": str, "name": str, "description": str, "price": float,
-        "defect": str, "category_id": lambda x: int(x) if x else None,
-        "weight": lambda x: float(x) if x not in (None, "") else None,
-        "length": lambda x: float(x) if x not in (None, "") else None,
-        "width": lambda x: float(x) if x not in (None, "") else None,
-        "height": lambda x: float(x) if x not in (None, "") else None,
-        "highlighted": lambda x: 1 if x else 0,
-        "highlight_label": str,
-        "highlight_color": str,
-        "pinned": lambda x: 1 if x else 0,
-        "status": str,
+    order_map = {
+        "pinned": "p.pinned DESC, p.featured DESC, p.created_at DESC",
+        "price_asc": "p.price ASC",
+        "price_desc": "p.price DESC",
+        "new": "p.created_at DESC",
     }
-    sets, vals = [], []
-    for k, conv in fields_map.items():
-        if k in data:
-            try:
-                sets.append(f"{k} = ?")
-                vals.append(conv(data[k]))
-            except (ValueError, TypeError):
-                pass
-    if sets:
-        sets.append("updated_at = CURRENT_TIMESTAMP")
-        vals.append(pid)
-        db.execute(f"UPDATE products SET {', '.join(sets)} WHERE id = ?", vals)
-        db.commit()
-    return jsonify({"ok": True})
+    query += "ORDER BY " + order_map.get(sort, order_map["pinned"])
+
+    with db.db_cursor() as cur:
+        cur.execute(query, params)
+        products = [dict(r) for r in cur.fetchall()]
+
+    ctx = base_context()
+    ctx.update({
+        "products": products,
+        "q": q,
+        "sort": sort,
+        "active_category": category_id,
+    })
+    return render_template("index.html", **ctx)
 
 
-@app.delete("/api/products/<int:pid>")
+@app.route("/product/<int:product_id>")
+def product_detail(product_id):
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM products WHERE id = ? AND is_active = 1", (product_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+        product = dict(row)
+        cur.execute(
+            "SELECT * FROM product_photos WHERE product_id = ? ORDER BY is_main DESC, sort_order ASC",
+            (product_id,),
+        )
+        photos = [dict(r) for r in cur.fetchall()]
+        category = None
+        if product["category_id"]:
+            cur.execute("SELECT * FROM categories WHERE id = ?", (product["category_id"],))
+            crow = cur.fetchone()
+            category = dict(crow) if crow else None
+
+    log_visit("visit", product_id)
+
+    ctx = base_context()
+    ctx.update({"product": product, "photos": photos, "category": category})
+    return render_template("product.html", **ctx)
+
+
+@app.route("/cart/add", methods=["POST"])
+def cart_add():
+    product_id = request.form.get("product_id", type=int)
+    qty = max(1, request.form.get("qty", default=1, type=int))
+    if not product_id:
+        abort(400)
+
+    with db.db_cursor() as cur:
+        cur.execute("SELECT id FROM products WHERE id = ? AND is_active = 1", (product_id,))
+        if not cur.fetchone():
+            abort(404)
+
+    cart = get_cart()
+    key = str(product_id)
+    cart[key] = cart.get(key, 0) + qty
+    save_cart(cart)
+    log_visit("cart_add", product_id)
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        _, total = get_cart_items()
+        return jsonify({"ok": True, "cart_count": sum(cart.values()), "total": total})
+    return redirect(url_for("product_detail", product_id=product_id, added=1))
+
+
+@app.route("/cart/update", methods=["POST"])
+def cart_update():
+    product_id = str(request.form.get("product_id", ""))
+    action = request.form.get("action")
+    cart = get_cart()
+
+    if product_id in cart:
+        if action == "remove":
+            del cart[product_id]
+        elif action == "inc":
+            cart[product_id] += 1
+        elif action == "dec":
+            cart[product_id] -= 1
+            if cart[product_id] <= 0:
+                del cart[product_id]
+    save_cart(cart)
+    return redirect(url_for("cart_view"))
+
+
+@app.route("/cart")
+def cart_view():
+    items, total = get_cart_items()
+    ctx = base_context()
+    ctx.update({"items": items, "total": total})
+    return render_template("cart.html", **ctx)
+
+
+@app.route("/checkout", methods=["POST"])
+def checkout():
+    name = request.form.get("name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    items, total = get_cart_items()
+
+    if not name or not phone or not items:
+        flash("Заполните имя и телефон", "error")
+        return redirect(url_for("cart_view"))
+
+    order = {"customer_name": name, "customer_phone": phone, "items": items, "total": total}
+    sent = telegram.send_order_notification(order)
+
+    import json as _json
+    with db.db_cursor(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO orders (customer_name, customer_phone, items_json, total, telegram_sent, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (name, phone, _json.dumps(items, ensure_ascii=False), total, int(sent), db.now()),
+        )
+
+    save_cart({})
+    ctx = base_context()
+    ctx.update({"order_total": total})
+    return render_template("checkout_success.html", **ctx)
+
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(config.UPLOADS_PATH, filename)
+
+
+@app.route("/reviews-media/<path:filename>")
+def review_file(filename):
+    return send_from_directory(config.REVIEWS_PATH, filename)
+
+
+# ---------------------------------------------------------------------------
+# admin auth
+# ---------------------------------------------------------------------------
+
+@app.route("/adm/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        settings = db.get_settings()
+        stored_hash = settings.get("admin_password_hash", "")
+        if stored_hash and check_password_hash(stored_hash, password):
+            session["is_admin"] = True
+            nxt = request.args.get("next") or url_for("admin_dashboard")
+            return redirect(nxt)
+        flash("Неверный пароль", "error")
+    return render_template("admin/login.html")
+
+
+@app.route("/adm/logout")
+def admin_logout():
+    session.pop("is_admin", None)
+    return redirect(url_for("admin_login"))
+
+
+# ---------------------------------------------------------------------------
+# admin: dashboard / stats
+# ---------------------------------------------------------------------------
+
+@app.route("/adm")
 @admin_required
-def api_delete_product(pid: int):
-    db = get_db()
-    photos = db.execute("SELECT filename FROM photos WHERE product_id = ?", (pid,)).fetchall()
-    for ph in photos:
-        try:
-            (UPLOAD_DIR / ph["filename"]).unlink(missing_ok=True)
-        except Exception:
-            pass
-    db.execute("DELETE FROM products WHERE id = ?", (pid,))
-    db.commit()
-    return jsonify({"ok": True})
+def admin_dashboard():
+    with db.db_cursor() as cur:
+        cur.execute("SELECT COUNT(*) c FROM products WHERE is_active = 1")
+        products_count = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) c FROM categories")
+        categories_count = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) c FROM visitors WHERE event = 'visit'")
+        visits_count = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) c FROM visitors WHERE event = 'cart_add'")
+        cart_adds_count = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) c FROM orders")
+        orders_count = cur.fetchone()["c"]
+        cur.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 10")
+        recent_orders = [dict(r) for r in cur.fetchall()]
+
+    return render_template(
+        "admin/dashboard.html",
+        products_count=products_count,
+        categories_count=categories_count,
+        visits_count=visits_count,
+        cart_adds_count=cart_adds_count,
+        orders_count=orders_count,
+        recent_orders=recent_orders,
+    )
 
 
-@app.post("/api/products/bulk_delete")
+@app.route("/adm/stats")
 @admin_required
-def api_bulk_delete():
-    data = request.get_json(force=True, silent=True) or {}
-    ids = data.get("ids") or []
-    if not ids:
-        return jsonify({"ok": True, "deleted": 0})
-    db = get_db()
-    qmarks = ",".join("?" * len(ids))
-    photos = db.execute(
-        f"SELECT filename FROM photos WHERE product_id IN ({qmarks})", ids
-    ).fetchall()
-    for ph in photos:
-        try:
-            (UPLOAD_DIR / ph["filename"]).unlink(missing_ok=True)
-        except Exception:
-            pass
-    db.execute(f"DELETE FROM products WHERE id IN ({qmarks})", ids)
-    db.commit()
-    return jsonify({"ok": True, "deleted": len(ids)})
+def admin_stats():
+    with db.db_cursor() as cur:
+        cur.execute(
+            "SELECT visit_date, "
+            "SUM(CASE WHEN event='visit' THEN 1 ELSE 0 END) visits, "
+            "SUM(CASE WHEN event='cart_add' THEN 1 ELSE 0 END) cart_adds "
+            "FROM visitors GROUP BY visit_date ORDER BY visit_date DESC LIMIT 30"
+        )
+        daily = [dict(r) for r in cur.fetchall()]
+    return render_template("admin/stats.html", daily=daily)
 
 
-# ----------------------------- API: photos -----------------------------------
+# ---------------------------------------------------------------------------
+# admin: categories
+# ---------------------------------------------------------------------------
 
-@app.post("/api/products/<int:pid>/photos")
+@app.route("/adm/categories", methods=["GET", "POST"])
 @admin_required
-def api_upload_photos(pid: int):
-    db = get_db()
-    prod = db.execute("SELECT id FROM products WHERE id = ?", (pid,)).fetchone()
-    if not prod:
-        return jsonify({"error": "Товар не найден"}), 404
+def admin_categories():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        if name:
+            with db.db_cursor(commit=True) as cur:
+                cur.execute(
+                    "INSERT INTO categories (name, sort_order, created_at) VALUES (?, 0, ?)",
+                    (name, db.now()),
+                )
+        return redirect(url_for("admin_categories"))
 
-    existing = db.execute("SELECT COUNT(*) AS c FROM photos WHERE product_id = ?", (pid,)).fetchone()["c"]
-    slots_left = MAX_PHOTOS_PER_PRODUCT - existing
-    if slots_left <= 0:
-        return jsonify({"error": f"Максимум {MAX_PHOTOS_PER_PRODUCT} фото на товар"}), 400
+    with db.db_cursor() as cur:
+        cur.execute(
+            "SELECT c.*, (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) product_count "
+            "FROM categories c ORDER BY c.sort_order ASC, c.name ASC"
+        )
+        categories = [dict(r) for r in cur.fetchall()]
+    return render_template("admin/categories.html", categories=categories)
 
+
+@app.route("/adm/categories/<int:cat_id>/delete", methods=["POST"])
+@admin_required
+def admin_category_delete(cat_id):
+    with db.db_cursor(commit=True) as cur:
+        cur.execute("UPDATE products SET category_id = NULL WHERE category_id = ?", (cat_id,))
+        cur.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    return redirect(url_for("admin_categories"))
+
+
+# ---------------------------------------------------------------------------
+# admin: products
+# ---------------------------------------------------------------------------
+
+@app.route("/adm/products")
+@admin_required
+def admin_products():
+    with db.db_cursor() as cur:
+        cur.execute(
+            "SELECT p.*, c.name AS category_name, "
+            "(SELECT filename FROM product_photos ph WHERE ph.product_id = p.id "
+            " ORDER BY ph.is_main DESC, ph.sort_order ASC LIMIT 1) AS main_photo "
+            "FROM products p LEFT JOIN categories c ON c.id = p.category_id "
+            "ORDER BY p.pinned DESC, p.id DESC"
+        )
+        products = [dict(r) for r in cur.fetchall()]
+    return render_template("admin/products.html", products=products)
+
+
+def _product_form_data():
+    return {
+        "number": request.form.get("number", "").strip(),
+        "title": request.form.get("title", "").strip(),
+        "price": request.form.get("price", type=float) or 0,
+        "old_price": request.form.get("old_price", type=float) or None,
+        "fault": request.form.get("fault", "").strip(),
+        "description": request.form.get("description", "").strip(),
+        "weight": request.form.get("weight", type=float),
+        "length": request.form.get("length", type=float),
+        "width": request.form.get("width", type=float),
+        "height": request.form.get("height", type=float),
+        "video_url": request.form.get("video_url", "").strip(),
+        "category_id": request.form.get("category_id", type=int),
+        "featured": 1 if request.form.get("featured") else 0,
+        "pinned": 1 if request.form.get("pinned") else 0,
+        "is_active": 1 if request.form.get("is_active", "1") else 0,
+    }
+
+
+@app.route("/adm/products/new", methods=["GET", "POST"])
+@admin_required
+def admin_product_new():
+    categories = fetch_categories()
+    if request.method == "POST":
+        data = _product_form_data()
+        with db.db_cursor(commit=True) as cur:
+            cur.execute(
+                "INSERT INTO products (number, title, price, old_price, fault, description, "
+                "weight, length, width, height, video_url, category_id, featured, pinned, "
+                "is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    data["number"], data["title"], data["price"], data["old_price"], data["fault"],
+                    data["description"], data["weight"], data["length"], data["width"], data["height"],
+                    data["video_url"], data["category_id"], data["featured"], data["pinned"],
+                    data["is_active"], db.now(),
+                ),
+            )
+            new_id = cur.lastrowid
+        _handle_photo_uploads(new_id)
+        return redirect(url_for("admin_products"))
+
+    return render_template("admin/product_form.html", product=None, photos=[], categories=categories)
+
+
+@app.route("/adm/products/<int:product_id>/edit", methods=["GET", "POST"])
+@admin_required
+def admin_product_edit(product_id):
+    categories = fetch_categories()
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM products WHERE id = ?", (product_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+        product = dict(row)
+
+    if request.method == "POST":
+        data = _product_form_data()
+        with db.db_cursor(commit=True) as cur:
+            cur.execute(
+                "UPDATE products SET number=?, title=?, price=?, old_price=?, fault=?, description=?, "
+                "weight=?, length=?, width=?, height=?, video_url=?, category_id=?, featured=?, "
+                "pinned=?, is_active=? WHERE id=?",
+                (
+                    data["number"], data["title"], data["price"], data["old_price"], data["fault"],
+                    data["description"], data["weight"], data["length"], data["width"], data["height"],
+                    data["video_url"], data["category_id"], data["featured"], data["pinned"],
+                    data["is_active"], product_id,
+                ),
+            )
+        _handle_photo_uploads(product_id)
+        return redirect(url_for("admin_product_edit", product_id=product_id))
+
+    with db.db_cursor() as cur:
+        cur.execute(
+            "SELECT * FROM product_photos WHERE product_id = ? ORDER BY is_main DESC, sort_order ASC",
+            (product_id,),
+        )
+        photos = [dict(r) for r in cur.fetchall()]
+
+    return render_template("admin/product_form.html", product=product, photos=photos, categories=categories)
+
+
+@app.route("/adm/products/<int:product_id>/delete", methods=["POST"])
+@admin_required
+def admin_product_delete(product_id):
+    with db.db_cursor() as cur:
+        cur.execute("SELECT filename FROM product_photos WHERE product_id = ?", (product_id,))
+        files = [r["filename"] for r in cur.fetchall()]
+    for fname in files:
+        fpath = os.path.join(config.UPLOADS_PATH, fname)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+    with db.db_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    return redirect(url_for("admin_products"))
+
+
+def _allowed_image(filename):
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in config.ALLOWED_IMAGE_EXT
+
+
+def _handle_photo_uploads(product_id):
     files = request.files.getlist("photos")
-    if not files:
-        return jsonify({"error": "Файлы не переданы"}), 400
+    if not files or files == [None]:
+        return
 
-    saved = []
-    for f in files[:slots_left]:
+    with db.db_cursor() as cur:
+        cur.execute("SELECT COUNT(*) c FROM product_photos WHERE product_id = ?", (product_id,))
+        existing_count = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) c FROM product_photos WHERE product_id = ? AND is_main = 1", (product_id,))
+        has_main = cur.fetchone()["c"] > 0
+
+    sort_i = existing_count
+    for f in files:
         if not f or not f.filename:
             continue
-        try:
-            filename = save_photo(f, pid)
-        except Exception as e:
+        if existing_count >= config.MAX_PHOTOS_PER_PRODUCT:
+            break
+        if not _allowed_image(f.filename):
             continue
-        is_main = 1 if existing == 0 and not saved else 0
-        cur = db.execute(
-            "INSERT INTO photos (product_id, filename, is_main, sort_order) VALUES (?,?,?,?)",
-            (pid, filename, is_main, existing + len(saved)),
-        )
-        saved.append({"id": cur.lastrowid, "filename": filename})
-    db.commit()
-    return jsonify({"ok": True, "saved": saved, "photos": fetch_photos(pid)})
+
+        ext = f.filename.rsplit(".", 1)[-1].lower()
+        token = uuid.uuid4().hex[:16]
+        is_main = 0
+        if not has_main:
+            is_main = 1
+            has_main = True
+        prefix = "main_" if is_main else ""
+        filename = f"{prefix}p{product_id}_{token}.{ext if ext != 'jpeg' else 'jpg'}"
+        filename = secure_filename(filename)
+        dest = os.path.join(config.UPLOADS_PATH, filename)
+
+        try:
+            img = Image.open(f.stream)
+            img = img.convert("RGB") if img.mode in ("RGBA", "P") else img
+            img.thumbnail((1920, 1920))
+            img.save(dest, quality=87, optimize=True)
+        except Exception:
+            f.stream.seek(0)
+            f.save(dest)
+
+        with db.db_cursor(commit=True) as cur:
+            cur.execute(
+                "INSERT INTO product_photos (product_id, filename, is_main, sort_order) VALUES (?,?,?,?)",
+                (product_id, filename, is_main, 0 if is_main else sort_i),
+            )
+        existing_count += 1
+        sort_i += 1
 
 
-@app.delete("/api/photos/<int:photo_id>")
+@app.route("/adm/photos/<int:photo_id>/delete", methods=["POST"])
 @admin_required
-def api_delete_photo(photo_id: int):
-    db = get_db()
-    row = db.execute("SELECT product_id, filename, is_main FROM photos WHERE id = ?", (photo_id,)).fetchone()
-    if not row:
-        return jsonify({"error": "Фото не найдено"}), 404
-    try:
-        (UPLOAD_DIR / row["filename"]).unlink(missing_ok=True)
-    except Exception:
-        pass
-    db.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
-    # If main photo was deleted — promote the first remaining
-    if row["is_main"]:
-        remaining = db.execute(
-            "SELECT id FROM photos WHERE product_id = ? ORDER BY sort_order ASC LIMIT 1",
-            (row["product_id"],),
-        ).fetchone()
-        if remaining:
-            db.execute("UPDATE photos SET is_main = 1 WHERE id = ?", (remaining["id"],))
-    db.commit()
-    return jsonify({"ok": True})
+def admin_photo_delete(photo_id):
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM product_photos WHERE id = ?", (photo_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+        photo = dict(row)
+
+    fpath = os.path.join(config.UPLOADS_PATH, photo["filename"])
+    if os.path.exists(fpath):
+        os.remove(fpath)
+
+    with db.db_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM product_photos WHERE id = ?", (photo_id,))
+        if photo["is_main"]:
+            cur.execute(
+                "SELECT id FROM product_photos WHERE product_id = ? ORDER BY sort_order ASC LIMIT 1",
+                (photo["product_id"],),
+            )
+            nxt = cur.fetchone()
+            if nxt:
+                cur.execute("UPDATE product_photos SET is_main = 1 WHERE id = ?", (nxt["id"],))
+
+    return redirect(url_for("admin_product_edit", product_id=photo["product_id"]))
 
 
-@app.post("/api/photos/<int:photo_id>/main")
+@app.route("/adm/photos/<int:photo_id>/make-main", methods=["POST"])
 @admin_required
-def api_set_main_photo(photo_id: int):
-    db = get_db()
-    row = db.execute("SELECT product_id FROM photos WHERE id = ?", (photo_id,)).fetchone()
-    if not row:
-        return jsonify({"error": "Фото не найдено"}), 404
-    db.execute("UPDATE photos SET is_main = 0 WHERE product_id = ?", (row["product_id"],))
-    db.execute("UPDATE photos SET is_main = 1 WHERE id = ?", (photo_id,))
-    db.commit()
-    return jsonify({"ok": True})
+def admin_photo_make_main(photo_id):
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM product_photos WHERE id = ?", (photo_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+        photo = dict(row)
+
+    with db.db_cursor(commit=True) as cur:
+        cur.execute("UPDATE product_photos SET is_main = 0 WHERE product_id = ?", (photo["product_id"],))
+        cur.execute("UPDATE product_photos SET is_main = 1 WHERE id = ?", (photo_id,))
+
+    return redirect(url_for("admin_product_edit", product_id=photo["product_id"]))
 
 
-@app.post("/api/products/<int:pid>/photos/reorder")
+# ---------------------------------------------------------------------------
+# admin: reviews (screenshots carousel)
+# ---------------------------------------------------------------------------
+
+@app.route("/adm/reviews", methods=["GET", "POST"])
 @admin_required
-def api_reorder_photos(pid: int):
-    data = request.get_json(force=True, silent=True) or {}
-    order = data.get("order") or []
-    db = get_db()
-    for i, photo_id in enumerate(order):
-        db.execute(
-            "UPDATE photos SET sort_order = ? WHERE id = ? AND product_id = ?",
-            (i, int(photo_id), pid),
-        )
-    db.commit()
-    return jsonify({"ok": True})
+def admin_reviews():
+    if request.method == "POST":
+        if "toggle" in request.form:
+            settings = db.get_settings()
+            current = settings.get("reviews_enabled", "1")
+            db.set_setting("reviews_enabled", "0" if current == "1" else "1")
+        else:
+            files = request.files.getlist("screenshots")
+            with db.db_cursor() as cur:
+                cur.execute("SELECT COUNT(*) c FROM review_screenshots")
+                order_i = cur.fetchone()["c"]
+            for f in files:
+                if not f or not f.filename or not _allowed_image(f.filename):
+                    continue
+                ext = f.filename.rsplit(".", 1)[-1].lower()
+                filename = secure_filename(f"rev_{uuid.uuid4().hex[:16]}.{ext if ext != 'jpeg' else 'jpg'}")
+                dest = os.path.join(config.REVIEWS_PATH, filename)
+                try:
+                    img = Image.open(f.stream)
+                    img = img.convert("RGB") if img.mode in ("RGBA", "P") else img
+                    img.thumbnail((1600, 1600))
+                    img.save(dest, quality=87, optimize=True)
+                except Exception:
+                    f.stream.seek(0)
+                    f.save(dest)
+                with db.db_cursor(commit=True) as cur:
+                    cur.execute(
+                        "INSERT INTO review_screenshots (filename, sort_order, created_at) VALUES (?,?,?)",
+                        (filename, order_i, db.now()),
+                    )
+                order_i += 1
+        return redirect(url_for("admin_reviews"))
 
-
-# ----------------------------- API: stats ------------------------------------
-
-@app.get("/api/stats")
-@admin_required
-def api_stats():
-    db = get_db()
-    total_visitors = db.execute("SELECT count FROM visitor_total WHERE id = 1").fetchone()["count"]
-    today = dt.date.today().isoformat()
-    today_visitors = db.execute(
-        "SELECT count FROM visitors WHERE day = ?", (today,)
-    ).fetchone()
-    today_visitors = today_visitors["count"] if today_visitors else 0
-    last_7 = db.execute(
-        "SELECT day, count FROM visitors WHERE day >= ? ORDER BY day ASC",
-        ((dt.date.today() - dt.timedelta(days=6)).isoformat(),),
-    ).fetchall()
-
-    total_products = db.execute("SELECT COUNT(*) AS c FROM products").fetchone()["c"]
-    total_value = db.execute("SELECT COALESCE(SUM(price),0) AS s FROM products").fetchone()["s"]
-    total_categories = db.execute("SELECT COUNT(*) AS c FROM categories").fetchone()["c"]
-    by_status = db.execute(
-        "SELECT status, COUNT(*) AS c FROM products GROUP BY status"
-    ).fetchall()
-    by_category = db.execute(
-        "SELECT COALESCE(c.name, 'Без категории') AS name, COUNT(p.id) AS c "
-        "FROM products p LEFT JOIN categories c ON c.id = p.category_id "
-        "GROUP BY c.id ORDER BY c DESC"
-    ).fetchall()
-
-    return jsonify({
-        "visitors_total": total_visitors,
-        "visitors_today": today_visitors,
-        "visitors_last_7": [dict(r) for r in last_7],
-        "products_total": total_products,
-        "products_value": total_value,
-        "categories_total": total_categories,
-        "by_status": {r["status"]: r["c"] for r in by_status},
-        "by_category": [dict(r) for r in by_category],
-    })
-
-
-@app.get("/api/visitor_count")
-def api_visitor_count():
-    """Публичный счётчик — общее число."""
-    db = get_db()
-    row = db.execute("SELECT count FROM visitor_total WHERE id = 1").fetchone()
-    return jsonify({"count": row["count"] if row else 0})
-
-
-# ----------------------------- API: backup -----------------------------------
-
-@app.get("/api/backup")
-@admin_required
-def api_backup():
-    """Создаёт ZIP-архив с CSV и всеми фотографиями по папкам."""
-    db = get_db()
-    products = db.execute(
-        "SELECT p.*, c.name AS category_name "
-        "FROM products p LEFT JOIN categories c ON c.id = p.category_id "
-        "ORDER BY p.id ASC"
-    ).fetchall()
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # CSV: products
-        csv_io = io.StringIO()
-        writer = csv.writer(csv_io, delimiter=";")
-        writer.writerow([
-            "id", "number", "name", "description", "price", "defect",
-            "category", "weight_kg", "length_cm", "width_cm", "height_cm",
-            "highlighted", "highlight_label", "pinned", "status",
-            "created_at", "updated_at", "photos"
-        ])
-        for p in products:
-            photos = db.execute(
-                "SELECT filename FROM photos WHERE product_id = ? ORDER BY is_main DESC, sort_order ASC",
-                (p["id"],),
-            ).fetchall()
-            writer.writerow([
-                p["id"], p["number"], p["name"], p["description"] or "",
-                p["price"], p["defect"] or "", p["category_name"] or "",
-                p["weight"] or "", p["length"] or "", p["width"] or "", p["height"] or "",
-                "да" if p["highlighted"] else "нет", p["highlight_label"] or "",
-                "да" if p["pinned"] else "нет", p["status"] or "available",
-                p["created_at"], p["updated_at"],
-                ", ".join(ph["filename"] for ph in photos),
-            ])
-        zf.writestr("products.csv", "\ufeff" + csv_io.getvalue())
-
-        # CSV: categories
-        cat_io = io.StringIO()
-        cw = csv.writer(cat_io, delimiter=";")
-        cw.writerow(["id", "name", "sort_order"])
-        for c in db.execute("SELECT * FROM categories ORDER BY id").fetchall():
-            cw.writerow([c["id"], c["name"], c["sort_order"]])
-        zf.writestr("categories.csv", "\ufeff" + cat_io.getvalue())
-
-        # JSON: settings (без пароля)
-        s = settings_dict()
-        s.pop("admin_password", None)
-        zf.writestr("settings.json", json.dumps(s, ensure_ascii=False, indent=2))
-
-        # Photos by folder
-        for p in products:
-            photos = db.execute(
-                "SELECT filename, is_main FROM photos WHERE product_id = ? "
-                "ORDER BY is_main DESC, sort_order ASC",
-                (p["id"],),
-            ).fetchall()
-            safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (p["name"] or ""))[:40]
-            folder = f"photos/{p['id']:04d}_{p['number']}_{safe_name}"
-            for ph in photos:
-                src = UPLOAD_DIR / ph["filename"]
-                if src.exists():
-                    arc_name = ("main_" if ph["is_main"] else "") + ph["filename"]
-                    zf.write(src, f"{folder}/{arc_name}")
-
-        # SQLite copy
-        db_copy_path = DATA_DIR / "store.db"
-        if db_copy_path.exists():
-            zf.write(db_copy_path, "store.db")
-
-        # README
-        zf.writestr("README.txt",
-                    "Бэкап создан: " + dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
-                    "Содержимое:\n"
-                    " - products.csv   — таблица товаров (UTF-8 BOM, разделитель ';')\n"
-                    " - categories.csv — таблица категорий\n"
-                    " - settings.json  — настройки магазина\n"
-                    " - photos/        — фотографии товаров по папкам (id_номер_название)\n"
-                    " - store.db       — полная копия БД (SQLite)\n")
-
-    buf.seek(0)
-    fname = f"backup_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-    return send_file(
-        buf, mimetype="application/zip",
-        as_attachment=True, download_name=fname,
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM review_screenshots ORDER BY sort_order ASC")
+        screenshots = [dict(r) for r in cur.fetchall()]
+    settings = db.get_settings()
+    return render_template(
+        "admin/reviews.html",
+        screenshots=screenshots,
+        reviews_enabled=settings.get("reviews_enabled", "1") == "1",
     )
 
 
-# ----------------------------- Error handlers --------------------------------
+@app.route("/adm/reviews/<int:shot_id>/delete", methods=["POST"])
+@admin_required
+def admin_review_delete(shot_id):
+    with db.db_cursor() as cur:
+        cur.execute("SELECT * FROM review_screenshots WHERE id = ?", (shot_id,))
+        row = cur.fetchone()
+    if row:
+        fpath = os.path.join(config.REVIEWS_PATH, row["filename"])
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        with db.db_cursor(commit=True) as cur:
+            cur.execute("DELETE FROM review_screenshots WHERE id = ?", (shot_id,))
+    return redirect(url_for("admin_reviews"))
 
-@app.errorhandler(413)
-def too_large(_):
-    return jsonify({"error": f"Файл слишком большой (макс {MAX_PHOTO_SIZE_MB} МБ)"}), 413
+
+# ---------------------------------------------------------------------------
+# admin: settings (telegram, proxy, contacts, admin password)
+# ---------------------------------------------------------------------------
+
+@app.route("/adm/settings", methods=["GET", "POST"])
+@admin_required
+def admin_settings():
+    if request.method == "POST":
+        for key in ["site_title", "contact_phone", "contact_name", "ship_address",
+                    "telegram_bot_token", "telegram_chat_id", "telegram_proxy_url"]:
+            value = request.form.get(key)
+            if value is not None:
+                db.set_setting(key, value.strip())
+
+        new_password = request.form.get("new_admin_password", "").strip()
+        if new_password:
+            db.set_setting("admin_password_hash", generate_password_hash(new_password))
+            flash("Пароль администратора обновлён", "success")
+
+        flash("Настройки сохранены", "success")
+        return redirect(url_for("admin_settings"))
+
+    settings = db.get_settings()
+    return render_template("admin/settings.html", settings=settings)
 
 
-# ----------------------------- Entrypoint ------------------------------------
+# ---------------------------------------------------------------------------
+# admin: backup
+# ---------------------------------------------------------------------------
 
-with app.app_context():
-    init_db()
+@app.route("/adm/backup")
+@admin_required
+def admin_backup():
+    s3_backups = backup_module.list_s3_backups()
+    return render_template("admin/backup.html", s3_backups=s3_backups)
+
+
+@app.route("/adm/backup/download")
+@admin_required
+def admin_backup_download():
+    data, filename = backup_module.create_backup_zip()
+    return Response(
+        data,
+        mimetype="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.route("/adm/backup/upload-s3", methods=["POST"])
+@admin_required
+def admin_backup_upload_s3():
+    ok, info = backup_module.upload_backup_to_s3()
+    flash(f"Бэкап загружен в S3: {info}" if ok else f"Ошибка: {info}", "success" if ok else "error")
+    return redirect(url_for("admin_backup"))
+
+
+@app.route("/adm/backup/import", methods=["POST"])
+@admin_required
+def admin_backup_import():
+    f = request.files.get("backup_file")
+    if not f or not f.filename:
+        flash("Файл не выбран", "error")
+        return redirect(url_for("admin_backup"))
+
+    ok, info = backup_module.import_backup_zip(f.stream)
+    if ok:
+        flash(
+            f"Импортировано: категорий {info['categories']}, товаров {info['products']}, "
+            f"фото {info['photos']}, отзывов {info['reviews']}",
+            "success",
+        )
+    else:
+        flash(f"Ошибка импорта: {info}", "error")
+    return redirect(url_for("admin_backup"))
+
+
+# ---------------------------------------------------------------------------
+# error handlers
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(404)
+def not_found(e):
+    return render_template("404.html", **base_context()), 404
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=False)

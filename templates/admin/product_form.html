@@ -1,0 +1,91 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ "Редактирование" if product else "Новый товар" }}{% endblock %}
+{% block content %}
+<h1>{{ "Редактирование товара" if product else "Новый товар" }}</h1>
+
+<form class="adm-form" method="post" enctype="multipart/form-data">
+  <div class="row2">
+    <div>
+      <label>Артикул</label>
+      <input type="text" name="number" value="{{ product.number if product else '' }}" required>
+    </div>
+    <div>
+      <label>Категория</label>
+      <select name="category_id">
+        <option value="">Без категории</option>
+        {% for c in categories %}
+          <option value="{{ c.id }}" {% if product and product.category_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <label>Название товара</label>
+  <input type="text" name="title" value="{{ product.title if product else '' }}" required>
+
+  <div class="row2">
+    <div>
+      <label>Новая цена, ₽</label>
+      <input type="number" step="0.01" name="price" value="{{ product.price if product else '' }}" required>
+    </div>
+    <div>
+      <label>Зачёркнутая цена, ₽ (необязательно)</label>
+      <input type="number" step="0.01" name="old_price" value="{{ product.old_price if product and product.old_price else '' }}">
+    </div>
+  </div>
+
+  <label>Дефект</label>
+  <textarea name="fault" placeholder="Например: вмятина на корпусе, повреждена упаковка">{{ product.fault if product else '' }}</textarea>
+
+  <label>Описание</label>
+  <textarea name="description">{{ product.description if product else '' }}</textarea>
+
+  <label>Ссылка на видео товара (необязательно)</label>
+  <input type="url" name="video_url" value="{{ product.video_url if product else '' }}" placeholder="https://...">
+
+  <label>Габариты и вес</label>
+  <div class="row4">
+    <input type="number" step="0.01" name="weight" placeholder="Вес, кг" value="{{ product.weight if product and product.weight else '' }}">
+    <input type="number" step="0.1" name="length" placeholder="Длина, см" value="{{ product.length if product and product.length else '' }}">
+    <input type="number" step="0.1" name="width" placeholder="Ширина, см" value="{{ product.width if product and product.width else '' }}">
+    <input type="number" step="0.1" name="height" placeholder="Высота, см" value="{{ product.height if product and product.height else '' }}">
+  </div>
+
+  <div class="adm-checkbox">
+    <input type="checkbox" name="pinned" id="pinned" {% if product and product.pinned %}checked{% endif %}>
+    <label for="pinned" style="margin:0;">Закрепить сверху списка</label>
+  </div>
+  <div class="adm-checkbox">
+    <input type="checkbox" name="featured" id="featured" {% if product and product.featured %}checked{% endif %}>
+    <label for="featured" style="margin:0;">Супер цена (стикер)</label>
+  </div>
+  <div class="adm-checkbox">
+    <input type="checkbox" name="is_active" id="is_active" {% if not product or product.is_active %}checked{% endif %}>
+    <label for="is_active" style="margin:0;">Показывать на сайте</label>
+  </div>
+
+  <label>Фото товара (до {{ 10 }} шт., первая загруженная — главная)</label>
+  <input type="file" name="photos" multiple accept="image/*">
+
+  {% if photos %}
+  <div class="photo-grid">
+    {% for ph in photos %}
+      <div class="ph {% if ph.is_main %}main{% endif %}">
+        <img src="{{ url_for('uploaded_file', filename=ph.filename) }}">
+        <div class="ph-actions">
+          {% if not ph.is_main %}
+          <form method="post" action="{{ url_for('admin_photo_make_main', photo_id=ph.id) }}"><button type="submit">Главная</button></form>
+          {% endif %}
+          <form method="post" action="{{ url_for('admin_photo_delete', photo_id=ph.id) }}" onsubmit="return confirm('Удалить фото?');"><button type="submit">✕</button></form>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div style="margin-top:20px;">
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+    <a href="{{ url_for('admin_products') }}" class="btn btn-outline">Отмена</a>
+  </div>
+</form>
+{% endblock %}

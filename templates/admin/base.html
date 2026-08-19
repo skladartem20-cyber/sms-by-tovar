@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Админка — {% block title %}{% endblock %}</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="adm-wrap">
+  <aside class="adm-sidebar">
+    <div class="brand">⚙ Админка</div>
+    <a href="{{ url_for('admin_dashboard') }}">Дашборд</a>
+    <a href="{{ url_for('admin_products') }}">Товары</a>
+    <a href="{{ url_for('admin_categories') }}">Категории</a>
+    <a href="{{ url_for('admin_reviews') }}">Отзывы</a>
+    <a href="{{ url_for('admin_stats') }}">Статистика</a>
+    <a href="{{ url_for('admin_backup') }}">Бэкапы</a>
+    <a href="{{ url_for('admin_settings') }}">Настройки</a>
+    <a href="{{ url_for('index') }}">Сайт →</a>
+    <a href="{{ url_for('admin_logout') }}">Выйти</a>
+  </aside>
+  <main class="adm-main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

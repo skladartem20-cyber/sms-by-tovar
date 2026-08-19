@@ -1,0 +1,40 @@
+{% extends "admin/base.html" %}
+{% block title %}Товары{% endblock %}
+{% block content %}
+<div class="toolbar" style="padding-top:0;">
+  <h1>Товары</h1>
+  <a class="btn btn-primary" href="{{ url_for('admin_product_new') }}">+ Добавить товар</a>
+</div>
+
+<table class="adm-table">
+  <thead>
+    <tr><th></th><th>Арт.</th><th>Название</th><th>Категория</th><th>Цена</th><th>Флаги</th><th>Активен</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for p in products %}
+    <tr>
+      <td>
+        {% if p.main_photo %}<img class="thumb-mini" src="{{ url_for('uploaded_file', filename=p.main_photo) }}">{% endif %}
+      </td>
+      <td class="number">{{ p.number }}</td>
+      <td><a href="{{ url_for('admin_product_edit', product_id=p.id) }}">{{ p.title }}</a></td>
+      <td>{{ p.category_name or "—" }}</td>
+      <td>{{ p.price | int }} ₽{% if p.old_price %} <span style="color:var(--ink-soft);text-decoration:line-through;">{{ p.old_price|int }}</span>{% endif %}</td>
+      <td>
+        {% if p.pinned %}📌{% endif %}
+        {% if p.featured %}🔥{% endif %}
+      </td>
+      <td>{{ "Да" if p.is_active else "Нет" }}</td>
+      <td>
+        <a href="{{ url_for('admin_product_edit', product_id=p.id) }}">Изменить</a>
+        <form method="post" action="{{ url_for('admin_product_delete', product_id=p.id) }}" style="display:inline;" onsubmit="return confirm('Удалить товар?');">
+          <button type="submit" style="border:none;background:none;color:var(--stamp);cursor:pointer;">Удалить</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8">Товаров пока нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

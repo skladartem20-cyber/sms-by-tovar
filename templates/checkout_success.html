@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Заказ оформлен — {{ site_title }}{% endblock %}
+{% block content %}
+<div class="empty-state">
+  <h1 style="font-family:var(--display);text-transform:uppercase;">Спасибо за заказ!</h1>
+  <p>Мы получили ваш заказ на сумму <b>{{ order_total | int }} ₽</b>.<br>
+  {{ contact_name }} свяжется с вами по указанному номеру для подтверждения.</p>
+  <a class="btn btn-dark" href="{{ url_for('index') }}">Вернуться в каталог</a>
+</div>
+{% endblock %}

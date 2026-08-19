@@ -1,0 +1,30 @@
+{% extends "admin/base.html" %}
+{% block title %}Отзывы{% endblock %}
+{% block content %}
+<h1>Блок «Отзывы»</h1>
+
+<form method="post">
+  <button type="submit" name="toggle" value="1" class="btn {{ 'btn-dark' if reviews_enabled else 'btn-outline' }}">
+    {{ "Скрыть блок отзывов на сайте" if reviews_enabled else "Показать блок отзывов на сайте" }}
+  </button>
+</form>
+
+<form method="post" enctype="multipart/form-data" class="adm-form" style="margin-top:20px;">
+  <label>Добавить скриншоты переписки с довольными клиентами</label>
+  <input type="file" name="screenshots" multiple accept="image/*">
+  <button type="submit" class="btn btn-primary" style="margin-top:12px;">Загрузить</button>
+</form>
+
+<div class="photo-grid" style="margin-top:20px;">
+  {% for s in screenshots %}
+    <div class="ph">
+      <img src="{{ url_for('review_file', filename=s.filename) }}">
+      <div class="ph-actions">
+        <form method="post" action="{{ url_for('admin_review_delete', shot_id=s.id) }}" onsubmit="return confirm('Удалить?');"><button type="submit">✕</button></form>
+      </div>
+    </div>
+  {% else %}
+    <p>Скриншотов пока нет</p>
+  {% endfor %}
+</div>
+{% endblock %}

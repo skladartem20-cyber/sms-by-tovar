@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ product.title }} — {{ site_title }}{% endblock %}
+{% block content %}
+
+{% if request.args.get('added') %}
+<div class="toast" style="position:static;transform:none;margin:10px 0;display:inline-flex;">
+  Товар добавлен в корзину. Чтобы купить, перейдите в <a href="{{ url_for('cart_view') }}">корзину</a>
+</div>
+{% endif %}
+
+<div class="product-layout">
+  <div>
+    <div class="gallery-main">
+      {% if photos %}
+        <img id="gallery-main-img" src="{{ url_for('uploaded_file', filename=photos[0].filename) }}" alt="{{ product.title }}">
+      {% else %}
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#B5AE9C;">Нет фото</div>
+      {% endif %}
+    </div>
+    <div class="gallery-thumbs">
+      {% for ph in photos %}
+        <img data-src="{{ url_for('uploaded_file', filename=ph.filename) }}"
+             src="{{ url_for('uploaded_file', filename=ph.filename) }}"
+             class="{% if loop.first %}active{% endif %}" alt="фото {{ loop.index }}">
+      {% endfor %}
+      {% if product.video_url %}
+        <a class="video-thumb" href="{{ product.video_url }}" target="_blank" rel="noopener">▶ Видео товара</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="product-info">
+    <div class="eyebrow">Арт. {{ product.number }}{% if category %} · {{ category.name }}{% endif %}</div>
+    <h1>{{ product.title }}</h1>
+
+    <div class="price-block">
+      <span class="price-new">{{ product.price | int }} ₽</span>
+      {% if product.old_price and product.old_price > product.price %}
+        <span class="price-old">{{ product.old_price | int }} ₽</span>
+        <span class="save-badge">Экономия {{ (product.old_price - product.price) | int }} ₽</span>
+      {% endif %}
+    </div>
+
+    {% if product.fault %}
+    <div class="defect-box">
+      <b>Дефект:</b> {{ product.fault }}
+    </div>
+    {% endif %}
+
+    <table class="fact-table">
+      {% if product.weight %}<tr><td>Вес</td><td>{{ product.weight }} кг</td></tr>{% endif %}
+      {% if product.length or product.width or product.height %}
+      <tr><td>Габариты (Д×Ш×В)</td><td>{{ product.length|default('—') }} × {{ product.width|default('—') }} × {{ product.height|default('—') }} см</td></tr>
+      {% endif %}
+    </table>
+
+    {% if product.description %}
+      <p style="font-size:13.5px;color:var(--ink-soft);line-height:1.6;">{{ product.description }}</p>
+    {% endif %}
+
+    <div class="info-tabs">
+      <button class="active" data-tab="tab-guarantee">Гарантия</button>
+      <button data-tab="tab-why">Почему дешевле?</button>
+      <button data-tab="tab-delivery">Доставка</button>
+    </div>
+    <div class="info-panel active" id="tab-guarantee">
+      Если товар придёт неисправным — свяжитесь с нами любым удобным способом, мы решим вопрос.
+      По любому товару вы можете запросить дополнительные фото или видео перед покупкой.
+      Все товары проверены на работоспособность перед отправкой.
+    </div>
+    <div class="info-panel" id="tab-why">
+      Это 100% новый товар с маркетплейса, который получил повреждение упаковки или косметический дефект
+      при транспортировке (например, помят корпус). Из-за этого его нельзя продавать как новый —
+      поэтому цена ниже, а функциональность полностью сохранена.
+    </div>
+    <div class="info-panel" id="tab-delivery">
+      Отправка из {{ ship_address }}. После оформления заказа мы свяжемся с вами по указанному номеру
+      для уточнения деталей доставки.
+    </div>
+
+    <form class="add-to-cart-form" action="{{ url_for('cart_add') }}" method="post">
+      <input type="hidden" name="product_id" value="{{ product.id }}">
+      <div class="buy-bar">
+        <input class="qty-input" type="number" name="qty" value="1" min="1" max="20">
+        <button type="submit" class="btn btn-primary">Купить</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if reviews_enabled and review_screenshots %}
+{% include "reviews_block.html" %}
+{% endif %}
+
+{% endblock %}
