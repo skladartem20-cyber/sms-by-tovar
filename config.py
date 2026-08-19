@@ -35,3 +35,4 @@ SHIP_ADDRESS_DEFAULT = os.environ.get("SHIP_ADDRESS", "г. Уссурийск")
 MAX_PHOTOS_PER_PRODUCT = 10
 ALLOWED_IMAGE_EXT = {"jpg", "jpeg", "png", "webp"}
 MAX_UPLOAD_MB = 15
+MAX_BACKUP_UPLOAD_MB = int(os.environ.get("MAX_BACKUP_UPLOAD_MB", 500))

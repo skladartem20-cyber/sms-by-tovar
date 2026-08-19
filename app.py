@@ -18,7 +18,7 @@ from startup_import import run_startup_import
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = config.SECRET_KEY
-app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_MB * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_BACKUP_UPLOAD_MB * 1024 * 1024
 
 db.init_db()
 run_startup_import()
@@ -756,6 +756,14 @@ def admin_backup_import():
 @app.errorhandler(404)
 def not_found(e):
     return render_template("404.html", **base_context()), 404
+
+
+@app.errorhandler(413)
+def too_large(e):
+    flash(f"Файл слишком большой. Максимальный размер загрузки — {config.MAX_BACKUP_UPLOAD_MB} МБ.", "error")
+    if session.get("is_admin"):
+        return redirect(request.referrer or url_for("admin_backup"))
+    return render_template("404.html", **base_context()), 413
 
 
 if __name__ == "__main__":
